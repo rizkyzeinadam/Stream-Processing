@@ -1,0 +1,189 @@
+version: '3.8'
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - flink-network
+    container_name: flink-zookeeper
+    mem_limit: 256m
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx512m"
+    networks:
+      - flink-network
+    container_name: flink-kafka
+    cap_add:
+      - NET_ADMIN
+    mem_limit: 1g
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/bin/kafka-broker-api-versions --bootstrap-server localhost:29092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    networks:
+      - flink-network
+    container_name: flink-node-exporter
+    mem_limit: 128m
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus-flink.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-flink-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=24h'
+    networks:
+      - flink-network
+    container_name: flink-prometheus
+    mem_limit: 512m
+    depends_on:
+      - node-exporter
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:latest
+    command:
+      - --kafka.server=kafka:29092
+    restart: unless-stopped
+    ports:
+      - "9308:9308"
+    networks:
+      - flink-network
+    container_name: flink-kafka-exporter
+    mem_limit: 128m
+    depends_on:
+      - kafka
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_USER: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+      GF_INSTALL_PLUGINS: grafana-piechart-panel
+    volumes:
+      - grafana-flink-data:/var/lib/grafana
+      - ./grafana-provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - flink-network
+    container_name: flink-grafana
+    mem_limit: 256m
+    depends_on:
+      - prometheus
+
+  jobmanager:
+    image: flink:1.17.1-scala_2.12-java11
+    container_name: flink-jobmanager
+    command: jobmanager
+    ports:
+      - "6123:6123"
+      - "8083:8081"
+    environment:
+      - JOB_MANAGER_RPC_ADDRESS=jobmanager
+      - JOB_MANAGER_RPC_PORT=6123
+      - TASK_MANAGER_NUMBER_OF_TASK_SLOTS=1
+    healthcheck:
+      test: curl -f http://localhost:8081/v1/status
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - flink-network
+    mem_limit: 512m
+    volumes:
+      - ./flink-conf.yaml:/opt/flink/conf/flink-conf.yaml
+
+  taskmanager1:
+    image: flink:1.17.1-scala_2.12-java11
+    container_name: flink-taskmanager1
+    hostname: taskmanager1
+    command: taskmanager -Dmetrics.reporter.prom.port=9249 -Dtaskmanager.numberOfTaskSlots=1
+    depends_on:
+      - jobmanager
+    ports:
+      - "6124:6124"
+      - "9249:9249"
+    environment:
+      - JOB_MANAGER_RPC_ADDRESS=jobmanager
+      - JOB_MANAGER_RPC_PORT=6123
+      - TASK_MANAGER_RPC_PORT=6124
+      - TASK_MANAGER_NUMBER_OF_TASK_SLOTS=1
+    networks:
+      - flink-network
+    cap_add:
+      - NET_ADMIN
+    mem_limit: 1500m
+    volumes:
+      - ./flink-conf.yaml:/opt/flink/conf/flink-conf.yaml
+
+  taskmanager2:
+    image: flink:1.17.1-scala_2.12-java11
+    container_name: flink-taskmanager2
+    hostname: taskmanager2
+    command: taskmanager -Dmetrics.reporter.prom.port=9250 -Dtaskmanager.numberOfTaskSlots=1
+    depends_on:
+      - jobmanager
+    ports:
+      - "6125:6125"
+      - "9250:9250"
+    environment:
+      - JOB_MANAGER_RPC_ADDRESS=jobmanager
+      - JOB_MANAGER_RPC_PORT=6123
+      - TASK_MANAGER_RPC_PORT=6125
+      - TASK_MANAGER_NUMBER_OF_TASK_SLOTS=1
+    networks:
+      - flink-network
+    cap_add:
+      - NET_ADMIN
+    mem_limit: 1500m
+    volumes:
+      - ./flink-conf.yaml:/opt/flink/conf/flink-conf.yaml
+
+networks:
+  flink-network:
+    driver: bridge
+
+volumes:
+  prometheus-flink-data:
+  grafana-flink-data:

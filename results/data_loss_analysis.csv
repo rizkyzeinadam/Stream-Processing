@@ -1,0 +1,3 @@
+Engine,Total Input Events,Total Output Events,Missing Events,Data Loss Percentage
+Flink,89579,160168,0,0.0
+Spark,89461,95964,0,0.0

@@ -1,0 +1,211 @@
+version: '3.8'
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - spark-network
+    container_name: spark-zookeeper
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    networks:
+      - spark-network
+    container_name: spark-kafka
+    mem_limit: 1g
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/bin/kafka-broker-api-versions --bootstrap-server localhost:29092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    networks:
+      - spark-network
+    container_name: spark-node-exporter
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus-spark.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-spark-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=24h'
+    networks:
+      - spark-network
+    container_name: spark-prometheus
+    mem_limit: 512m
+    depends_on:
+      - node-exporter
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:latest
+    command:
+      - --kafka.server=kafka:29092
+    ports:
+      - "9308:9308"
+    networks:
+      - spark-network
+    container_name: spark-kafka-exporter
+    restart: unless-stopped
+    depends_on:
+      - kafka
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_USER: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+      GF_INSTALL_PLUGINS: grafana-piechart-panel
+    volumes:
+      - grafana-spark-data:/var/lib/grafana
+      - ./grafana-provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - spark-network
+    container_name: spark-grafana
+    mem_limit: 256m
+    depends_on:
+      - prometheus
+
+  spark-master:
+    image: apache/spark:v3.4.0
+    container_name: spark-driver
+    hostname: spark-master
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.master.Master
+      - --host
+      - spark-master
+      - --port
+      - "7077"
+      - --webui-port
+      - "8080"
+    ports:
+      - "8080:8080"
+      - "7077:7077"
+      - "4040:4040"
+      - "9091:9091"
+    environment:
+      - SPARK_LOCAL_DIRS=/tmp/spark-local
+      - PYSPARK_PYTHON=python3
+      - PYSPARK_SUBMIT_ARGS=--packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.0 pyspark-shell
+      - SPARK_DAEMON_JAVA_OPTS=-Dspark.ui.prometheus.enabled=true
+    networks:
+      - spark-network
+    mem_limit: 512m
+    volumes:
+      - ./spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+      - ./metrics.properties:/opt/spark/conf/metrics.properties:ro
+
+  spark-worker1:
+    image: apache/spark:v3.4.0
+    container_name: spark-worker1
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.worker.Worker
+      - --webui-port
+      - "8081"
+      - --port
+      - "7078"
+      - --work-dir
+      - /tmp/spark-work
+      - spark://spark-master:7077
+    environment:
+      - SPARK_WORKER_MEMORY=1200m
+      - SPARK_WORKER_CORES=2
+      - SPARK_LOCAL_DIRS=/tmp/spark-local
+      - PYSPARK_PYTHON=python3
+      - SPARK_DAEMON_JAVA_OPTS=-Dspark.ui.prometheus.enabled=true
+    depends_on:
+      - spark-master
+    ports:
+      - "8091:8081"
+      - "7078:7078"
+    networks:
+      - spark-network
+    cap_add:
+      - NET_ADMIN
+    mem_limit: 1500m
+    volumes:
+      - ./spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+      - ./metrics.properties:/opt/spark/conf/metrics.properties:ro
+
+  spark-worker2:
+    image: apache/spark:v3.4.0
+    container_name: spark-worker2
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.worker.Worker
+      - --webui-port
+      - "8081"
+      - --port
+      - "7078"
+      - --work-dir
+      - /tmp/spark-work
+      - spark://spark-master:7077
+    environment:
+      - SPARK_WORKER_MEMORY=1200m
+      - SPARK_WORKER_CORES=2
+      - SPARK_LOCAL_DIRS=/tmp/spark-local
+      - PYSPARK_PYTHON=python3
+      - SPARK_DAEMON_JAVA_OPTS=-Dspark.ui.prometheus.enabled=true
+    depends_on:
+      - spark-master
+    ports:
+      - "8092:8081"
+      - "7079:7078"
+    networks:
+      - spark-network
+    cap_add:
+      - NET_ADMIN
+    mem_limit: 1500m
+    volumes:
+      - ./spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+      - ./metrics.properties:/opt/spark/conf/metrics.properties:ro
+
+networks:
+  spark-network:
+    driver: bridge
+
+volumes:
+  prometheus-spark-data:
+  grafana-spark-data:

@@ -1,0 +1,40 @@
+metrics_collection:
+  interval: 1  # Collect every 1 second
+  prometheus_url: "http://localhost:9090"
+  
+  metrics:
+    - name: "throughput"
+      query: "rate(kafka_topic_partition_current_offset[1m])"
+      unit: "msg/s"
+    
+    - name: "latency"
+      query: "flink_taskmanager_job_task_operator_average_record_delay_millis"
+      unit: "ms"
+    
+    - name: "cpu"
+      query: "100 - (avg by (instance) (rate(node_cpu_seconds_total{mode='idle'}[1m])) * 100)"
+      unit: "%"
+    
+    - name: "memory"
+      query: "(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100"
+      unit: "%"
+    
+    - name: "kafka_lag"
+      query: "sum(kafka_consumergroup_lag)"
+      unit: "messages"
+    
+    - name: "jvm_memory"
+      query: "jvm_memory_used_bytes / jvm_memory_max_bytes * 100"
+      unit: "%"
+
+dashboard:
+  refresh_interval: 5  # Grafana refresh every 5s
+  retention_days: 7
+  
+  panels:
+    - "throughput_graph"
+    - "latency_graph"
+    - "resource_usage"
+    - "kafka_lag_trend"
+    - "fault_timeline"
+    - "recovery_progress"

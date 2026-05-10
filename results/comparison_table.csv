@@ -1,0 +1,11 @@
+Metric,Flink,Spark,Better
+Throughput (Avg),179.65,89.57,Flink
+Throughput (Peak),449.12,493.0,Spark
+Latency (Avg),234.44,2688.81,Flink
+Latency (Spike),852.46,21423.58,Flink
+Kafka Lag (Max),5234.0,100.0,Spark
+CPU Usage (Avg),18.97,56.49,Flink
+Memory Usage (Avg),78.95,71.53,Spark
+Recovery Time (s),3.33,87.78,Flink
+Data Loss (%),0.0,0.0,Tie
+Duplicate Events (%),79.23,7.27,Spark

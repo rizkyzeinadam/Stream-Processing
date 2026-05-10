@@ -1,0 +1,152 @@
+{
+  "uid": "spark-overview",
+  "title": "Spark Processing Overview",
+  "tags": ["spark", "stream", "kafka"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Prometheus Up",
+      "datasource": "Prometheus",
+      "targets": [{ "expr": "max(up{job=~\"spark-master|spark-worker1|spark-worker2|spark-app|kafka-exporter|node-exporter\"})", "refId": "A" }],
+      "gridPos": { "h": 6, "w": 4, "x": 0, "y": 0 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Kafka Consumer Lag (Exporter)",
+      "datasource": "Prometheus",
+      "targets": [{ "expr": "(sum(kafka_consumergroup_lag) or sum(kafka_consumergroup_lag_sum)) or on() vector(0)", "refId": "A" }],
+      "gridPos": { "h": 6, "w": 10, "x": 4, "y": 0 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Kafka Offset Rate",
+      "datasource": "Prometheus",
+      "targets": [{ "expr": "(clamp_min(sum(delta(kafka_topic_partition_current_offset[1m])) / 60, 0)) or on() vector(0)", "refId": "A" }],
+      "gridPos": { "h": 6, "w": 10, "x": 14, "y": 0 }
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU Usage",
+      "datasource": "Prometheus",
+      "targets": [{ "expr": "100 - (avg by (instance) (rate(node_cpu_seconds_total{mode='idle'}[1m])) * 100)", "refId": "A" }],
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 6 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory Usage",
+      "datasource": "Prometheus",
+      "targets": [{ "expr": "(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100", "refId": "A" }],
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 6 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Spark Worker State (1=Up, 0=Down)",
+      "datasource": "Prometheus",
+      "targets": [{ "expr": "up{job=~\"spark-worker.*\"}", "refId": "A", "legendFormat": "{{job}}" }],
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "min": 0, "max": 1 },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 12 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Executors per Worker",
+      "datasource": "Prometheus",
+      "targets": [{ "expr": "max by (job) (metrics_worker_executors_Value{job=~\"spark-worker1|spark-worker2\"}) or (max by (job) (up{job=~\"spark-worker1|spark-worker2\"}) * 0)", "refId": "A", "legendFormat": "{{job}}" }],
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 20 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Spark Throughput by Worker (Records/s)",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "spark_streaming_throughput_worker1",
+          "refId": "A",
+          "legendFormat": "worker1"
+        },
+        {
+          "expr": "spark_streaming_throughput_worker2",
+          "refId": "B",
+          "legendFormat": "worker2"
+        }
+      ],
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Spark Application Latency (ms)",
+      "datasource": "Prometheus",
+      "targets": [{ "expr": "spark_streaming_latency", "refId": "A", "legendFormat": "Avg Latency" }],
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "ms", "min": 0 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Kafka Offset per Partition",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "kafka_topic_partition_current_offset{partition=\"0\"}",
+          "refId": "A",
+          "legendFormat": "Partition 0 (Worker1)"
+        },
+        {
+          "expr": "kafka_topic_partition_current_offset{partition=\"1\"}",
+          "refId": "B",
+          "legendFormat": "Partition 1 (Worker2)"
+        }
+      ],
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 36 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Queue Buildup (Offset Rate - Throughput per Worker)",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "(delta(kafka_topic_partition_current_offset{partition=\"0\"}[1m]) / 60) - spark_streaming_throughput_worker1",
+          "refId": "A",
+          "legendFormat": "Queue buildup Worker1"
+        },
+        {
+          "expr": "(delta(kafka_topic_partition_current_offset{partition=\"1\"}[1m]) / 60) - spark_streaming_throughput_worker2",
+          "refId": "B",
+          "legendFormat": "Queue buildup Worker2"
+        }
+      ],
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 36 }
+    },
+    {
+      "type": "text",
+      "title": "Fault Timeline",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 44 },
+      "options": {
+        "mode": "markdown",
+        "content": "## Experiment Reading Guide\n\n- **t=300s**: Switchover starts. Worker1 is degraded first so the handoff is visible.\n- **t=330s**: Worker1 is killed. Worker2 should continue taking the load. Watch:\n  - **Spark Throughput by Worker**: worker1 → 0\n  - **Kafka Offset per Partition**: partition 0 keeps rising (messages pile up)\n  - **Queue Buildup**: partition 0 becomes positive (messages arrive faster than processing)\n- **t=660s**: Worker1 is restarted. Watch Worker1 state return to 1 and queue drain.\n\nUse **Spark Worker State** and **Executors per Worker** for 2-worker visibility."
+      }
+    }
+  ]
+}

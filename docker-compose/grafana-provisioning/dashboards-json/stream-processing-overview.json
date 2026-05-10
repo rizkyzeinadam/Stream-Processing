@@ -1,0 +1,288 @@
+{
+  "uid": "flink-overview",
+  "title": "Flink Processing Overview",
+  "tags": ["flink", "stream", "kafka", "prometheus"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 2,
+  "refresh": "5s",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "templating": {
+    "list": []
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Prometheus Up",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "up{job=\"prometheus\"}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "gridPos": { "h": 8, "w": 4, "x": 0, "y": 0 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Kafka Lag",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "(sum(kafka_consumergroup_lag) or sum(kafka_consumergroup_lag_sum)) or on() vector(0)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "gridPos": { "h": 8, "w": 10, "x": 4, "y": 0 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Kafka Offset Rate",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "(sum(rate(kafka_topic_partition_current_offset[1m])) or sum(rate(kafka_topic_partition_current_offset_sum[1m]))) or on() vector(0)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "gridPos": { "h": 8, "w": 10, "x": 14, "y": 0 }
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU Usage",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "100 - (avg by (instance) (rate(node_cpu_seconds_total{mode='idle'}[1m])) * 100)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory Usage",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 }
+    },
+    {
+      "type": "timeseries",
+      "title": "TM State (1=Up, 0=Down)",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "up{job=\"flink\"}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Flink TaskManager Throughput (TM1/TM2)",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum by (taskmanager) (flink_taskmanager_job_task_numRecordsInPerSecond or on (taskmanager) (up{job=\"flink\"} * 0))",
+          "refId": "A",
+          "legendFormat": "{{taskmanager}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 }
+    },
+    {
+      "type": "timeseries",
+      "title": "TM1 Throughput (Records/s)",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum by (taskmanager) (flink_taskmanager_job_task_numRecordsInPerSecond{taskmanager=\"TM1\"} or on (taskmanager) (up{job=\"flink\",taskmanager=\"TM1\"} * 0))",
+          "refId": "A",
+          "legendFormat": "TM1"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 }
+    },
+    {
+      "type": "timeseries",
+      "title": "TM2 Throughput (Records/s)",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "last_over_time((sum by (taskmanager) (flink_taskmanager_job_task_numRecordsInPerSecond{taskmanager=\"TM2\"}))[5m:])",
+          "refId": "A",
+          "legendFormat": "TM2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 }
+    },
+    {
+      "type": "timeseries",
+      "title": "TM Active Flag (1=Processing, 0=Idle)",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "max by (taskmanager) (((sum by (taskmanager) (flink_taskmanager_job_task_numRecordsInPerSecond) > bool 0) or on (taskmanager) (up{job=\"flink\"} * 0)))",
+          "refId": "A",
+          "legendFormat": "{{taskmanager}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 40 }
+    },
+    {
+      "type": "text",
+      "title": "Fault Timeline",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 48 },
+      "options": {
+        "mode": "markdown",
+        "content": "## Experiment Reading Guide\n\n- **t=300s**: Switchover starts. TM1 is degraded first so the handoff is visible.\n- **t=330s**: TM1 is killed. TM2 should continue taking the load.\n- **t=660s**: TM1 is restarted. Watch TM1 state return to 1.\n\nUse the **TM State** and **TM1/TM2 Throughput** panels together to see takeover and recovery clearly."
+      }
+    }
+  ]
+}

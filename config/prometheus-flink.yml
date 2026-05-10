@@ -1,0 +1,33 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 15s
+  external_labels:
+    system: 'flink'
+
+scrape_configs:
+  - job_name: 'flink'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['flink-taskmanager1:9249']
+        labels:
+          taskmanager: 'TM1'
+          hostname: 'taskmanager1'
+      - targets: ['flink-taskmanager2:9250']
+        labels:
+          taskmanager: 'TM2'
+          hostname: 'taskmanager2'
+
+  - job_name: 'kafka'
+    static_configs:
+      - targets: ['kafka-exporter:9308']
+
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+rule_files: []

@@ -1,0 +1,24 @@
+cascading_faults:
+  - time: 0
+    action: "clear_faults"
+    description: "Start with clean state"
+  - time: 300
+    action: "switchover"
+    source: "worker1"
+    target: "worker2"
+    description: "Switchover: TM1 and TM2 failover (TM1 -> TM2)"
+  - time: 330
+    action: "kill_worker"
+    target: "worker1"
+    description: "Kill TM1 after switchover"
+  - time: 660
+    action: "restart_node"
+    target: "worker1"
+    description: "Restart TM1 for recovery"
+  - time: 900
+    action: "clear_faults"
+    description: "Ensure all faults cleared, system stabilizes"
+
+recovery_detection_threshold: 2.0  # 2x baseline latency
+max_recovery_time: 30  # seconds
+check_interval: 1  # second
