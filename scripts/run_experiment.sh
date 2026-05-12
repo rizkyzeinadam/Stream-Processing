@@ -531,6 +531,20 @@ generate_reports() {
     success "Reports generated with scoring and analysis"
 }
 
+# Generate publication-grade scientific figures
+generate_publication_figures() {
+    log "Generating publication-grade scientific figures..."
+
+    cd "$PROJECT_ROOT"
+    python3 "$SCRIPTS_DIR/generate_publication_figures.py" \
+        --project-root "$PROJECT_ROOT" \
+        --results-dir "$RESULTS_DIR" \
+        --config-dir "$CONFIG_DIR" \
+        --metrics-dir "$METRICS_DIR"
+
+    success "Publication-grade figures generated"
+}
+
 # Display results
 display_results() {
     log "Experiment results saved to:"
@@ -600,6 +614,7 @@ main() {
         run_spark_experiment
         cleanup
         generate_reports
+        generate_publication_figures
         display_results
     else
         error "Unknown option: $1"

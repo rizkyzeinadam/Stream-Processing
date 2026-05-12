@@ -1,0 +1,216 @@
+{
+  "run_metrics": [
+    {
+      "run_id": "flink-1",
+      "system": "Flink",
+      "fault_time": 300.0,
+      "recovery_propagation_delay": 3.6695919036865234,
+      "recovery_stabilization_index": 0.3302238805970149,
+      "backlog_recovery_rate": 52.59440424590797,
+      "replay_amplification_ratio": 0.7880083501713572,
+      "recovery_duration": 3.6695919036865234,
+      "baseline_throughput": 216.91666666666666,
+      "baseline_latency": 102.26374999999999,
+      "peak_lag": 579.0,
+      "peak_latency": 852.4554166666654,
+      "final_lag": 386.0,
+      "final_throughput": 142.08333333333334
+    },
+    {
+      "run_id": "spark-1",
+      "system": "Spark",
+      "fault_time": 300.0,
+      "recovery_propagation_delay": 29.55028510093689,
+      "recovery_stabilization_index": 0.13580246913580246,
+      "backlog_recovery_rate": 1.8612341577122797,
+      "replay_amplification_ratio": 0.07269089323839438,
+      "recovery_duration": 29.55028510093689,
+      "baseline_throughput": 46.0,
+      "baseline_latency": 303.125,
+      "peak_lag": 56.0,
+      "peak_latency": 21423.5807860262,
+      "final_lag": 1.0,
+      "final_throughput": 186.0
+    }
+  ],
+  "flink_statistics": {
+    "fault_time": {
+      "n": 1,
+      "mean": 300.0,
+      "std": 0.0,
+      "ci_low": 300.0,
+      "ci_high": 300.0
+    },
+    "recovery_propagation_delay": {
+      "n": 1,
+      "mean": 3.6695919036865234,
+      "std": 0.0,
+      "ci_low": 3.6695919036865234,
+      "ci_high": 3.6695919036865234
+    },
+    "recovery_stabilization_index": {
+      "n": 1,
+      "mean": 0.3302238805970149,
+      "std": 0.0,
+      "ci_low": 0.3302238805970149,
+      "ci_high": 0.3302238805970149
+    },
+    "backlog_recovery_rate": {
+      "n": 1,
+      "mean": 52.59440424590797,
+      "std": 0.0,
+      "ci_low": 52.59440424590797,
+      "ci_high": 52.59440424590797
+    },
+    "replay_amplification_ratio": {
+      "n": 1,
+      "mean": 0.7880083501713572,
+      "std": 0.0,
+      "ci_low": 0.7880083501713572,
+      "ci_high": 0.7880083501713572
+    },
+    "recovery_duration": {
+      "n": 1,
+      "mean": 3.6695919036865234,
+      "std": 0.0,
+      "ci_low": 3.6695919036865234,
+      "ci_high": 3.6695919036865234
+    },
+    "baseline_throughput": {
+      "n": 1,
+      "mean": 216.91666666666666,
+      "std": 0.0,
+      "ci_low": 216.91666666666666,
+      "ci_high": 216.91666666666666
+    },
+    "baseline_latency": {
+      "n": 1,
+      "mean": 102.26374999999999,
+      "std": 0.0,
+      "ci_low": 102.26374999999999,
+      "ci_high": 102.26374999999999
+    },
+    "peak_lag": {
+      "n": 1,
+      "mean": 579.0,
+      "std": 0.0,
+      "ci_low": 579.0,
+      "ci_high": 579.0
+    },
+    "peak_latency": {
+      "n": 1,
+      "mean": 852.4554166666654,
+      "std": 0.0,
+      "ci_low": 852.4554166666654,
+      "ci_high": 852.4554166666654
+    },
+    "final_lag": {
+      "n": 1,
+      "mean": 386.0,
+      "std": 0.0,
+      "ci_low": 386.0,
+      "ci_high": 386.0
+    },
+    "final_throughput": {
+      "n": 1,
+      "mean": 142.08333333333334,
+      "std": 0.0,
+      "ci_low": 142.08333333333334,
+      "ci_high": 142.08333333333334
+    }
+  },
+  "spark_statistics": {
+    "fault_time": {
+      "n": 1,
+      "mean": 300.0,
+      "std": 0.0,
+      "ci_low": 300.0,
+      "ci_high": 300.0
+    },
+    "recovery_propagation_delay": {
+      "n": 1,
+      "mean": 29.55028510093689,
+      "std": 0.0,
+      "ci_low": 29.55028510093689,
+      "ci_high": 29.55028510093689
+    },
+    "recovery_stabilization_index": {
+      "n": 1,
+      "mean": 0.13580246913580246,
+      "std": 0.0,
+      "ci_low": 0.13580246913580246,
+      "ci_high": 0.13580246913580246
+    },
+    "backlog_recovery_rate": {
+      "n": 1,
+      "mean": 1.8612341577122797,
+      "std": 0.0,
+      "ci_low": 1.8612341577122797,
+      "ci_high": 1.8612341577122797
+    },
+    "replay_amplification_ratio": {
+      "n": 1,
+      "mean": 0.07269089323839438,
+      "std": 0.0,
+      "ci_low": 0.07269089323839438,
+      "ci_high": 0.07269089323839438
+    },
+    "recovery_duration": {
+      "n": 1,
+      "mean": 29.55028510093689,
+      "std": 0.0,
+      "ci_low": 29.55028510093689,
+      "ci_high": 29.55028510093689
+    },
+    "baseline_throughput": {
+      "n": 1,
+      "mean": 46.0,
+      "std": 0.0,
+      "ci_low": 46.0,
+      "ci_high": 46.0
+    },
+    "baseline_latency": {
+      "n": 1,
+      "mean": 303.125,
+      "std": 0.0,
+      "ci_low": 303.125,
+      "ci_high": 303.125
+    },
+    "peak_lag": {
+      "n": 1,
+      "mean": 56.0,
+      "std": 0.0,
+      "ci_low": 56.0,
+      "ci_high": 56.0
+    },
+    "peak_latency": {
+      "n": 1,
+      "mean": 21423.5807860262,
+      "std": 0.0,
+      "ci_low": 21423.5807860262,
+      "ci_high": 21423.5807860262
+    },
+    "final_lag": {
+      "n": 1,
+      "mean": 1.0,
+      "std": 0.0,
+      "ci_low": 1.0,
+      "ci_high": 1.0
+    },
+    "final_throughput": {
+      "n": 1,
+      "mean": 186.0,
+      "std": 0.0,
+      "ci_low": 186.0,
+      "ci_high": 186.0
+    }
+  },
+  "configuration": {
+    "baseline_window": 60.0,
+    "throughput_ratio": 0.9,
+    "latency_ratio": 1.25,
+    "lag_ratio": 1.25,
+    "stable_dwell_samples": 5,
+    "confidence": 0.95
+  }
+}
