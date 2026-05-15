@@ -5,10 +5,19 @@
     "load": "/Users/rizkyzeinadam/Documents/Percobaan Tesis/config/load.yaml",
     "fault": "/Users/rizkyzeinadam/Documents/Percobaan Tesis/config/fault.yaml"
   },
-  "fault_times": [
-    300,
-    330,
-    660
+  "fault_markers": [
+    {
+      "time": 300.0,
+      "label": "Switchover\nWorker2"
+    },
+    {
+      "time": 330.0,
+      "label": "Kill\nWorker1"
+    },
+    {
+      "time": 660.0,
+      "label": "Restart\nWorker1"
+    }
   ],
   "load_phases": [
     {
@@ -40,44 +49,44 @@
   "figures": [
     {
       "filename": "throughput_recovery_timeline.png",
-      "caption": "Throughput evolution across baseline, increasing load, burst load, and fault-induced recovery windows for Flink and Spark.",
+      "caption": "Throughput evolution across baseline, increasing load, burst load, and the configured recovery observation window for Flink and Spark.",
       "placement": "Bab 4.2 - Throughput and workload response",
-      "discussion": "Shows throughput collapse, backlog catch-up, and stabilization under the shared fault sequence.",
+      "discussion": "Shows throughput response and stabilization behavior under the shared fault sequence without implying unconstrained recovery completion.",
       "directory": "publication_charts"
     },
     {
       "filename": "latency_evolution.png",
-      "caption": "Latency evolution with fault annotations and symlog scaling to preserve both steady-state and spike dynamics.",
+      "caption": "Latency evolution with fault annotations, symlog scaling, and telemetry qualification to preserve steady-state and spike dynamics.",
       "placement": "Bab 4.3 - Latency behavior under cascading faults",
-      "discussion": "Highlights latency spikes, post-fault propagation, and the stabilization gap between engines.",
+      "discussion": "Highlights latency spikes and post-fault propagation while noting that Spark per-event latency telemetry is unavailable in the current observability setup.",
       "directory": "publication_charts"
     },
     {
       "filename": "kafka_lag_evolution.png",
-      "caption": "Kafka lag and recovery-state evolution showing backlog accumulation and catch-up behavior during the recovery phase.",
+      "caption": "Kafka lag and active backlog duration evolution showing backlog accumulation and stabilization behavior during the configured recovery observation window.",
       "placement": "Bab 4.4 - Backpressure and Kafka lag analysis",
-      "discussion": "Visualizes backlog propagation and how lag reduction aligns with recovery state decay.",
+      "discussion": "Visualizes backlog propagation and how lag reduction aligns with the active backlog duration proxy.",
       "directory": "backlog_analysis"
     },
     {
       "filename": "resource_usage_overview.png",
-      "caption": "CPU and memory utilization during fault injection and catch-up periods for both stream-processing engines.",
+      "caption": "CPU and memory utilization during fault injection and stabilization periods for both stream-processing engines.",
       "placement": "Bab 4.5 - Resource overhead during recovery",
       "discussion": "Supports discussion of recovery-related resource amplification and state-management overhead.",
       "directory": "recovery_analysis"
     },
     {
       "filename": "recovery_timeline_master.png",
-      "caption": "Master timeline combining offered load, throughput, latency, Kafka lag, and recovery-state traces with fault annotations.",
+      "caption": "Master timeline combining offered load, throughput, latency, Kafka lag, and active backlog duration traces with fault annotations.",
       "placement": "Bab 4.6 - Master recovery timeline",
-      "discussion": "Provides a publication-style observability figure for temporal recovery analysis.",
+      "discussion": "Provides a publication-style observability figure for temporal recovery analysis while qualifying the recovery proxy used in telemetry.",
       "directory": "recovery_analysis"
     },
     {
       "filename": "recovery_duration_comparison.png",
-      "caption": "Recovery duration comparison under identical cascading failures.",
+      "caption": "Threshold-based stabilization interval comparison under identical cascading faults.",
       "placement": "Bab 4.7 - Recovery duration comparison",
-      "discussion": "Summarizes the end-to-end stabilization speed difference between Flink and Spark.",
+      "discussion": "Summarizes the configured recovery observation window without implying unconstrained natural recovery completion.",
       "directory": "recovery_analysis"
     },
     {

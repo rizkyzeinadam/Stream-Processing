@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import matplotlib as mpl
 import matplotlib.patches as patches
@@ -52,12 +53,6 @@ PHASES = [
     (360, 540, "High load", "#fff1dd"),
     (540, 600, "Burst load", "#fde6e6"),
     (600, 900, "Recovery phase", "#edf6ef"),
-]
-
-FAULT_MARKERS = [
-    (300, "Fault 1\nSwitchover"),
-    (330, "Fault 2\nKill TM1"),
-    (660, "Fault 3\nRestart TM1"),
 ]
 
 
@@ -136,10 +131,58 @@ def add_phase_shading(ax: plt.Axes) -> None:
         )
 
 
-def add_fault_markers(ax: plt.Axes, y_offset: float = 0.95) -> None:
+def normalize_fault_action(action: Optional[str]) -> str:
+    if not action:
+        return "Fault"
+    primary = re.split(r"[_\-\s]+", str(action).strip())[0]
+    return primary.capitalize() if primary else "Fault"
+
+
+def normalize_fault_target(target: Optional[str]) -> str:
+    if not target:
+        return ""
+
+    target_text = str(target).strip().lower()
+    target_match = re.search(r"(?:taskmanager|worker|node)[^\d]*(\d+)", target_text)
+    if target_match:
+        prefix = "TM" if "taskmanager" in target_text else "Worker" if "worker" in target_text else "Node"
+        return f"{prefix}{target_match.group(1)}"
+
+    if "kafka" in target_text:
+        return "Kafka"
+
+    cleaned = re.sub(r"[_\-]+", " ", target_text)
+    parts = [part for part in cleaned.split() if part]
+    return " ".join(part.capitalize() for part in parts)
+
+
+def build_fault_markers(fault_config: Dict) -> List[Tuple[float, str]]:
+    markers: List[Tuple[float, str]] = []
+    for fault in fault_config.get("cascading_faults", []):
+        if not isinstance(fault, dict):
+            continue
+
+        fault_time = fault.get("time")
+        if fault_time is None:
+            continue
+
+        try:
+            normalized_time = float(fault_time)
+        except (TypeError, ValueError):
+            continue
+
+        action = normalize_fault_action(fault.get("action") or fault.get("type"))
+        target = normalize_fault_target(fault.get("target") or fault.get("source") or fault.get("node"))
+        label = action if not target else f"{action}\n{target}"
+        markers.append((normalized_time, label))
+
+    return markers
+
+
+def add_fault_markers(ax: plt.Axes, fault_markers: Sequence[Tuple[float, str]], y_offset: float = 0.95) -> None:
     ylim = ax.get_ylim()
     y_pos = ylim[0] + (ylim[1] - ylim[0]) * y_offset
-    for fault_time, label in FAULT_MARKERS:
+    for fault_time, label in fault_markers:
         ax.axvline(fault_time, color="#444444", linestyle="--", linewidth=1.0, alpha=0.8)
         ax.text(
             fault_time + 2,
@@ -154,6 +197,10 @@ def add_fault_markers(ax: plt.Axes, y_offset: float = 0.95) -> None:
         )
 
 
+def add_footnote(fig: plt.Figure, text: str) -> None:
+    fig.text(0.5, 0.01, text, ha="center", va="bottom", fontsize=8, color="#555555")
+
+
 def plot_time_series_dual(
     flink: pd.DataFrame,
     spark: pd.DataFrame,
@@ -166,6 +213,8 @@ def plot_time_series_dual(
     secondary_col: Optional[str] = None,
     secondary_label: Optional[str] = None,
     secondary_scale: str = "linear",
+    fault_markers: Sequence[Tuple[float, str]] = (),
+    footnote: Optional[str] = None,
 ) -> None:
     fig, ax = plt.subplots(figsize=(11, 5.5))
 
@@ -195,6 +244,8 @@ def plot_time_series_dual(
     ax.set_ylabel(y_label)
     add_phase_shading(ax)
 
+    spark_latency_unavailable = y_col == "latency" and spark[y_col].isna().all()
+
     if secondary_col and secondary_label:
         ax2 = ax.twinx()
         for engine, df in (("Flink", flink), ("Spark", spark)):
@@ -215,17 +266,39 @@ def plot_time_series_dual(
         lines, labels = ax.get_legend_handles_labels()
         lines2, labels2 = ax2.get_legend_handles_labels()
         ax2.legend(lines + lines2, labels + labels2, loc="upper right", frameon=True)
-        add_fault_markers(ax)
+        add_fault_markers(ax, fault_markers)
     else:
-        add_fault_markers(ax)
+        add_fault_markers(ax, fault_markers)
         ax.legend(loc="upper right", frameon=True)
 
-    fig.tight_layout()
+    if spark_latency_unavailable:
+        ax.text(
+            0.02,
+            0.02,
+            "Spark per-event latency telemetry unavailable in the current observability configuration.",
+            transform=ax.transAxes,
+            ha="left",
+            va="bottom",
+            fontsize=8,
+            color="#555555",
+            bbox=dict(boxstyle="round,pad=0.25", facecolor="white", edgecolor="#cccccc", alpha=0.92),
+        )
+
+    if footnote:
+        fig.tight_layout(rect=(0, 0.05, 1, 1))
+        add_footnote(fig, footnote)
+    else:
+        fig.tight_layout()
     fig.savefig(filename)
     plt.close(fig)
 
 
-def plot_resource_usage(flink: pd.DataFrame, spark: pd.DataFrame, filename: Path) -> None:
+def plot_resource_usage(
+    flink: pd.DataFrame,
+    spark: pd.DataFrame,
+    filename: Path,
+    fault_markers: Sequence[Tuple[float, str]],
+) -> None:
     fig, axes = plt.subplots(2, 1, figsize=(11, 7.2), sharex=True)
 
     for ax, metric, label in (
@@ -247,16 +320,21 @@ def plot_resource_usage(flink: pd.DataFrame, spark: pd.DataFrame, filename: Path
         ax.set_ylabel(label)
         ax.legend(loc="upper right", frameon=True)
         add_phase_shading(ax)
-        add_fault_markers(ax, y_offset=0.92)
+        add_fault_markers(ax, fault_markers, y_offset=0.92)
 
-    axes[0].set_title("Resource usage during fault recovery and catch-up", pad=12, weight="semibold")
+    axes[0].set_title("Resource usage during fault injection and stabilization", pad=12, weight="semibold")
     axes[1].set_xlabel("Elapsed experiment time (s)")
     fig.tight_layout()
     fig.savefig(filename)
     plt.close(fig)
 
 
-def plot_recovery_master(flink: pd.DataFrame, spark: pd.DataFrame, filename: Path) -> None:
+def plot_recovery_master(
+    flink: pd.DataFrame,
+    spark: pd.DataFrame,
+    filename: Path,
+    fault_markers: Sequence[Tuple[float, str]],
+) -> None:
     fig, axes = plt.subplots(4, 1, figsize=(12, 13), sharex=True)
 
     panel_specs = [
@@ -282,9 +360,9 @@ def plot_recovery_master(flink: pd.DataFrame, spark: pd.DataFrame, filename: Pat
             ax.set_yscale("symlog", linthresh=1.0)
         ax.set_ylabel(ylabel)
         add_phase_shading(ax)
-        add_fault_markers(ax, y_offset=0.92)
+        add_fault_markers(ax, fault_markers, y_offset=0.92)
 
-    axes[0].set_title("Master recovery timeline with fault annotations and system responses", pad=12, weight="semibold")
+    axes[0].set_title("Master timeline with fault annotations and telemetry proxies", pad=12, weight="semibold")
     axes[0].legend(loc="upper right", frameon=True)
 
     lag_ax = axes[3]
@@ -305,7 +383,7 @@ def plot_recovery_master(flink: pd.DataFrame, spark: pd.DataFrame, filename: Pat
     lag_ax.set_ylabel("Kafka lag (records)")
     lag_ax.set_xlabel("Elapsed experiment time (s)")
     add_phase_shading(lag_ax)
-    add_fault_markers(lag_ax, y_offset=0.92)
+    add_fault_markers(lag_ax, fault_markers, y_offset=0.92)
 
     recovery_ax = lag_ax.twinx()
     for engine, df in (("Flink", flink), ("Spark", spark)):
@@ -317,17 +395,33 @@ def plot_recovery_master(flink: pd.DataFrame, spark: pd.DataFrame, filename: Pat
             color=style["color"],
             linewidth=1.6,
             alpha=0.7,
-            label=f"{engine} recovery state",
+            label=f"{engine} active backlog duration",
         )
-    recovery_ax.set_ylabel("Recovery state / active backlog duration (s)")
+    recovery_ax.set_ylabel("Active backlog duration / stabilization proxy (s)")
 
     lines, labels = lag_ax.get_legend_handles_labels()
     lines2, labels2 = recovery_ax.get_legend_handles_labels()
     lag_ax.legend(lines + lines2, labels + labels2, loc="upper right", frameon=True, ncol=2)
 
-    fig.tight_layout()
+    fig.tight_layout(rect=(0, 0.05, 1, 1))
+    add_footnote(fig, "Active backlog duration is a recovery proxy derived from the observability pipeline; backlog equivalence is approximate.")
     fig.savefig(filename)
     plt.close(fig)
+
+
+def should_skip_data_loss_reconciliation(summary: Dict, flink: pd.DataFrame, spark: pd.DataFrame) -> Tuple[bool, str]:
+    analysis = summary.get("analysis", {})
+    engines = ["Flink", "Spark"]
+    output_events = [analysis.get(engine, {}).get("DataLoss", {}).get("total_output_events", 0) for engine in engines]
+    throughput_peak = max(
+        pd.to_numeric(flink.get("throughput", pd.Series(dtype=float)), errors="coerce").max(skipna=True) if "throughput" in flink else 0,
+        pd.to_numeric(spark.get("throughput", pd.Series(dtype=float)), errors="coerce").max(skipna=True) if "throughput" in spark else 0,
+    )
+
+    if sum(output_events) == 0 and pd.notna(throughput_peak) and throughput_peak > 0:
+        return True, "Observed output events are zero while throughput remains non-zero, so the reconciliation panel would contradict the telemetry."
+
+    return False, ""
 
 
 def plot_recovery_duration_bar(summary: Dict, filename: Path) -> None:
@@ -338,8 +432,8 @@ def plot_recovery_duration_bar(summary: Dict, filename: Path) -> None:
     fig, ax = plt.subplots(figsize=(8.6, 4.8))
     values = [flink, spark]
     bars = ax.bar(["Flink", "Spark"], values, color=[ENGINE_STYLES["Flink"]["color"], ENGINE_STYLES["Spark"]["color"]], width=0.55)
-    ax.set_ylabel("Recovery time (s)")
-    ax.set_title("Recovery duration comparison under identical cascading faults", pad=12, weight="semibold")
+    ax.set_ylabel("Threshold-based stabilization interval (s)")
+    ax.set_title("Configured recovery observation window comparison under identical cascading faults", pad=12, weight="semibold")
     ax.set_ylim(0, max(values) * 1.2 if max(values) > 0 else 1)
     for bar, value in zip(bars, values):
         ax.text(
@@ -350,6 +444,16 @@ def plot_recovery_duration_bar(summary: Dict, filename: Path) -> None:
             va="bottom",
             fontsize=10,
         )
+    ax.text(
+        0.5,
+        -0.16,
+        "Intervals are threshold-driven and configuration-dependent; they should not be read as unconstrained natural recovery completion times.",
+        transform=ax.transAxes,
+        ha="center",
+        va="top",
+        fontsize=8,
+        color="#555555",
+    )
     fig.tight_layout()
     fig.savefig(filename)
     plt.close(fig)
@@ -407,7 +511,7 @@ def plot_data_loss_reconciliation(summary: Dict, filename: Path) -> None:
     ax.set_xticks(list(x))
     ax.set_xticklabels(engines)
     ax.set_ylabel("Event count")
-    ax.set_title("Output reconciliation and loss assessment", pad=12, weight="semibold")
+    ax.set_title("Output reconciliation under consistent telemetry", pad=12, weight="semibold")
     ymax = max(max(input_events), max(output_events))
     ax.set_ylim(0, ymax * 1.18 if ymax > 0 else 1)
     ax.legend(loc="upper left", frameon=True)
@@ -427,7 +531,7 @@ def plot_data_loss_reconciliation(summary: Dict, filename: Path) -> None:
     ax.text(
         0.5,
         -0.18,
-        "Zero missing events indicate no permanent loss; output surplus reflects replay/backlog amplification rather than silent data disappearance.",
+        "Zero missing events indicate no permanent loss; output surplus reflects transient replay and backlog amplification rather than silent data disappearance.",
         transform=ax.transAxes,
         ha="center",
         va="top",
@@ -468,13 +572,13 @@ def plot_architecture_comparison(filename: Path) -> None:
         (0.08, 0.72, 0.34, 0.10, "Continuous processing\ntrue streaming", "#eaf3fb", ENGINE_STYLES["Flink"]["color"], "semibold"),
         (0.08, 0.54, 0.34, 0.10, "Asynchronous checkpoints\nlow-latency state capture", "#eaf3fb", ENGINE_STYLES["Flink"]["color"], "normal"),
         (0.08, 0.36, 0.34, 0.10, "Adaptive rebalance\nfast TM recovery", "#eaf3fb", ENGINE_STYLES["Flink"]["color"], "normal"),
-        (0.08, 0.18, 0.34, 0.10, "Replay amplification\nmanaged by recovery state", "#eaf3fb", ENGINE_STYLES["Flink"]["color"], "normal"),
+        (0.08, 0.18, 0.34, 0.10, "Replay amplification\nmanaged by stabilization proxy", "#eaf3fb", ENGINE_STYLES["Flink"]["color"], "normal"),
     ]
 
     spark_boxes = [
         (0.58, 0.72, 0.34, 0.10, "Micro-batch execution\ntrigger-based scheduling", "#fcefe9", ENGINE_STYLES["Spark"]["color"], "semibold"),
         (0.58, 0.54, 0.34, 0.10, "Batch recomputation\nstate store coordination", "#fcefe9", ENGINE_STYLES["Spark"]["color"], "normal"),
-        (0.58, 0.36, 0.34, 0.10, "Driver-mediated recovery\npropagated catch-up", "#fcefe9", ENGINE_STYLES["Spark"]["color"], "normal"),
+        (0.58, 0.36, 0.34, 0.10, "Driver-mediated recovery\nstabilization propagation", "#fcefe9", ENGINE_STYLES["Spark"]["color"], "normal"),
         (0.58, 0.18, 0.34, 0.10, "Replay semantics\ndelayed stabilization", "#fcefe9", ENGINE_STYLES["Spark"]["color"], "normal"),
     ]
 
@@ -522,43 +626,43 @@ def build_records() -> List[FigureRecord]:
             filename="throughput_recovery_timeline.png",
             directory="publication_charts",
             placement="Bab 4.2 - Throughput and workload response",
-            caption="Throughput evolution across baseline, increasing load, burst load, and fault-induced recovery windows for Flink and Spark.",
-            discussion="Shows throughput collapse, backlog catch-up, and stabilization under the shared fault sequence.",
+            caption="Throughput evolution across baseline, increasing load, burst load, and the configured recovery observation window for Flink and Spark.",
+            discussion="Shows throughput response and stabilization behavior under the shared fault sequence without implying unconstrained recovery completion.",
         ),
         FigureRecord(
             filename="latency_evolution.png",
             directory="publication_charts",
             placement="Bab 4.3 - Latency behavior under cascading faults",
-            caption="Latency evolution with fault annotations and symlog scaling to preserve both steady-state and spike dynamics.",
-            discussion="Highlights latency spikes, post-fault propagation, and the stabilization gap between engines.",
+            caption="Latency evolution with fault annotations, symlog scaling, and telemetry qualification to preserve steady-state and spike dynamics.",
+            discussion="Highlights latency spikes and post-fault propagation while noting that Spark per-event latency telemetry is unavailable in the current observability setup.",
         ),
         FigureRecord(
             filename="kafka_lag_evolution.png",
             directory="backlog_analysis",
             placement="Bab 4.4 - Backpressure and Kafka lag analysis",
-            caption="Kafka lag and recovery-state evolution showing backlog accumulation and catch-up behavior during the recovery phase.",
-            discussion="Visualizes backlog propagation and how lag reduction aligns with recovery state decay.",
+            caption="Kafka lag and active backlog duration evolution showing backlog accumulation and stabilization behavior during the configured recovery observation window.",
+            discussion="Visualizes backlog propagation and how lag reduction aligns with the active backlog duration proxy.",
         ),
         FigureRecord(
             filename="resource_usage_overview.png",
             directory="recovery_analysis",
             placement="Bab 4.5 - Resource overhead during recovery",
-            caption="CPU and memory utilization during fault injection and catch-up periods for both stream-processing engines.",
+            caption="CPU and memory utilization during fault injection and stabilization periods for both stream-processing engines.",
             discussion="Supports discussion of recovery-related resource amplification and state-management overhead.",
         ),
         FigureRecord(
             filename="recovery_timeline_master.png",
             directory="recovery_analysis",
             placement="Bab 4.6 - Master recovery timeline",
-            caption="Master timeline combining offered load, throughput, latency, Kafka lag, and recovery-state traces with fault annotations.",
-            discussion="Provides a publication-style observability figure for temporal recovery analysis.",
+            caption="Master timeline combining offered load, throughput, latency, Kafka lag, and active backlog duration traces with fault annotations.",
+            discussion="Provides a publication-style observability figure for temporal recovery analysis while qualifying the recovery proxy used in telemetry.",
         ),
         FigureRecord(
             filename="recovery_duration_comparison.png",
             directory="recovery_analysis",
             placement="Bab 4.7 - Recovery duration comparison",
-            caption="Recovery duration comparison under identical cascading failures.",
-            discussion="Summarizes the end-to-end stabilization speed difference between Flink and Spark.",
+            caption="Threshold-based stabilization interval comparison under identical cascading faults.",
+            discussion="Summarizes the configured recovery observation window without implying unconstrained natural recovery completion.",
         ),
         FigureRecord(
             filename="replay_amplification_analysis.png",
@@ -605,6 +709,7 @@ def main() -> None:
     summary = load_json(results_dir / "experiment_summary.json")
     load_config = load_yaml(config_dir / "load.yaml")
     fault_config = load_yaml(config_dir / "fault.yaml")
+    fault_markers = build_fault_markers(fault_config)
 
     if flink_metrics.empty or spark_metrics.empty:
         raise SystemExit("Both flink_metrics.csv and spark_metrics.csv must exist and contain data.")
@@ -622,9 +727,10 @@ def main() -> None:
         spark_metrics,
         x_col="elapsed_seconds",
         y_col="throughput",
-        title="Throughput evolution and recovery catch-up under cascading faults",
+        title="Throughput evolution across the configured observation window under cascading faults",
         y_label="Throughput (messages/s)",
         filename=directories["publication_charts"] / "throughput_recovery_timeline.png",
+        fault_markers=fault_markers,
     )
 
     plot_time_series_dual(
@@ -632,10 +738,12 @@ def main() -> None:
         spark_metrics,
         x_col="elapsed_seconds",
         y_col="latency",
-        title="Latency evolution and recovery propagation under identical fault injection",
+        title="Latency evolution with telemetry qualification under identical fault injection",
         y_label="Latency (ms)",
         filename=directories["publication_charts"] / "latency_evolution.png",
         symlog=True,
+        fault_markers=fault_markers,
+        footnote="Spark per-event latency telemetry unavailable in the current observability configuration.",
     )
 
     plot_time_series_dual(
@@ -643,20 +751,31 @@ def main() -> None:
         spark_metrics,
         x_col="elapsed_seconds",
         y_col="kafka_lag",
-        title="Kafka backlog evolution and active recovery-state duration",
+        title="Kafka backlog evolution and active backlog duration proxy",
         y_label="Kafka lag (records)",
         filename=directories["backlog_analysis"] / "kafka_lag_evolution.png",
         symlog=True,
         secondary_col="recovery_time",
-        secondary_label="Recovery state (s)",
+        secondary_label="Active backlog duration (s)",
+        fault_markers=fault_markers,
+        footnote="Active backlog duration is a recovery proxy; backlog equivalence is approximate across engines.",
     )
 
-    plot_resource_usage(flink_metrics, spark_metrics, directories["recovery_analysis"] / "resource_usage_overview.png")
-    plot_recovery_master(flink_metrics, spark_metrics, directories["recovery_analysis"] / "recovery_timeline_master.png")
+    plot_resource_usage(flink_metrics, spark_metrics, directories["recovery_analysis"] / "resource_usage_overview.png", fault_markers)
+    plot_recovery_master(flink_metrics, spark_metrics, directories["recovery_analysis"] / "recovery_timeline_master.png", fault_markers)
     plot_recovery_duration_bar(summary, directories["recovery_analysis"] / "recovery_duration_comparison.png")
     plot_replay_amplification(summary, directories["correctness_analysis"] / "replay_amplification_analysis.png")
-    plot_data_loss_reconciliation(summary, directories["correctness_analysis"] / "data_loss_reconciliation.png")
+
+    skip_reconciliation, skip_reason = should_skip_data_loss_reconciliation(summary, flink_metrics, spark_metrics)
+    if skip_reconciliation:
+        print(f"Warning: skipping data_loss_reconciliation.png because {skip_reason}")
+    else:
+        plot_data_loss_reconciliation(summary, directories["correctness_analysis"] / "data_loss_reconciliation.png")
+
     plot_architecture_comparison(directories["figures"] / "architecture_comparison.png")
+
+    if skip_reconciliation:
+        records = [record for record in records if record.filename != "data_loss_reconciliation.png"]
 
     catalog_path = results_dir / "publication_figure_catalog.md"
     write_catalog(records, catalog_path)
@@ -669,7 +788,7 @@ def main() -> None:
             "load": str(config_dir / "load.yaml"),
             "fault": str(config_dir / "fault.yaml"),
         },
-        "fault_times": [item[0] for item in FAULT_MARKERS],
+        "fault_markers": [{"time": time, "label": label} for time, label in fault_markers],
         "load_phases": [
             {"start": start, "end": end, "label": label}
             for start, end, label, _color in PHASES

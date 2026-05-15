@@ -1,130 +1,130 @@
 {
-  "timestamp": "2026-05-09T19:09:40.475309",
+  "timestamp": "2026-05-15T16:45:09.341614",
   "analysis": {
     "Flink": {
       "Throughput": {
-        "average": 179.64590321330644,
-        "peak": 449.1166666666667
+        "average": 198.2524160029206,
+        "peak": 539.7333333333333
       },
       "Latency": {
-        "average": 234.44297750511234,
-        "peak": 852.4554166666654
+        "average": 92.96929142300193,
+        "peak": 170.95833333333334
       },
       "Backpressure": {
-        "max_lag": 5234.0
+        "max_lag": 4526.0
       },
       "Resource": {
-        "cpu_avg": 18.970772171286328,
-        "mem_avg": 78.95340231318147
+        "cpu_avg": 9.555965205506697,
+        "mem_avg": 70.75863681865992
       },
       "Recovery": {
-        "recovery_duration": 3.334618091583252
+        "recovery_duration": 366.5182981491089
       },
       "Correctness": {
-        "duplicates": 70974,
-        "duplicate_percentage": 79.2314521530523,
-        "duplicate_source": "Observed duplicate patterns are likely influenced by: 1. repetitive IDS traffic characteristics, 2. temporary replay during checkpoint recovery, 3. transient event reprocessing during failover.",
-        "correctness_assessment": "Natural repetitive traffic or temporary replay. No permanent correctness violations confirmed."
+        "duplicates": 88143,
+        "duplicate_percentage": 98.4052133982472,
+        "duplicate_source": "Observed duplicates may include repetitive traffic patterns and transient recovery replay.",
+        "correctness_assessment": "No permanent loss detected; surplus likely reflects transient replay behavior."
       },
       "DataLoss": {
         "loss_percentage": 0.0,
-        "total_input_events": 89579,
-        "total_output_events": 160168,
+        "total_input_events": 89572,
+        "total_output_events": 177355,
         "missing_events": 0
       }
     },
     "Spark": {
       "Throughput": {
-        "average": 89.56623931623932,
-        "peak": 493.0
+        "average": 25.462406015037594,
+        "peak": 230.0
       },
       "Latency": {
-        "average": 2688.805134031743,
-        "peak": 21423.5807860262
+        "average": 530.6377657608591,
+        "peak": 1691.304347826087
       },
       "Backpressure": {
         "max_lag": 100.0
       },
       "Resource": {
-        "cpu_avg": 56.493809836662614,
-        "mem_avg": 71.52504218798866
+        "cpu_avg": 25.554412274067854,
+        "mem_avg": 69.5405953045016
       },
       "Recovery": {
-        "recovery_duration": 87.78408813476562
+        "recovery_duration": 0.0
       },
       "Correctness": {
-        "duplicates": 6504,
-        "duplicate_percentage": 7.270508053621598,
-        "duplicate_source": "Observed duplicate patterns are likely influenced by: 1. repetitive IDS traffic characteristics, 2. temporary replay during checkpoint recovery, 3. transient event reprocessing during failover.",
-        "correctness_assessment": "Natural repetitive traffic or temporary replay. No permanent correctness violations confirmed."
+        "duplicates": 0,
+        "duplicate_percentage": 0.0,
+        "duplicate_source": "None",
+        "correctness_assessment": "Data loss detected after backlog stabilization."
       },
       "DataLoss": {
-        "loss_percentage": 0.0,
-        "total_input_events": 89461,
-        "total_output_events": 95964,
-        "missing_events": 0
+        "loss_percentage": 74.46019022516029,
+        "total_input_events": 89536,
+        "total_output_events": 22780,
+        "missing_events": 66669
       }
     }
   },
   "comparison": [
     {
       "Metric": "Throughput (Avg)",
-      "Flink": 179.65,
-      "Spark": 89.57,
+      "Flink": 198.25,
+      "Spark": 25.46,
       "Better": "Flink"
     },
     {
       "Metric": "Throughput (Peak)",
-      "Flink": 449.12,
-      "Spark": 493.0,
-      "Better": "Spark"
-    },
-    {
-      "Metric": "Latency (Avg)",
-      "Flink": 234.44,
-      "Spark": 2688.81,
+      "Flink": 539.73,
+      "Spark": 230.0,
       "Better": "Flink"
     },
     {
-      "Metric": "Latency (Spike)",
-      "Flink": 852.46,
-      "Spark": 21423.58,
+      "Metric": "Latency (Avg)",
+      "Flink": 92.97,
+      "Spark": 530.64,
+      "Better": "Flink"
+    },
+    {
+      "Metric": "Latency (Peak)",
+      "Flink": 170.96,
+      "Spark": 1691.3,
       "Better": "Flink"
     },
     {
       "Metric": "Kafka Lag (Max)",
-      "Flink": 5234.0,
+      "Flink": 4526.0,
       "Spark": 100.0,
       "Better": "Spark"
     },
     {
       "Metric": "CPU Usage (Avg)",
-      "Flink": 18.97,
-      "Spark": 56.49,
+      "Flink": 9.56,
+      "Spark": 25.55,
       "Better": "Flink"
     },
     {
       "Metric": "Memory Usage (Avg)",
-      "Flink": 78.95,
-      "Spark": 71.53,
+      "Flink": 70.76,
+      "Spark": 69.54,
       "Better": "Spark"
     },
     {
-      "Metric": "Recovery Time (s)",
-      "Flink": 3.33,
-      "Spark": 87.78,
-      "Better": "Flink"
+      "Metric": "Stabilization Interval (s)",
+      "Flink": 366.52,
+      "Spark": 0.0,
+      "Better": "Spark"
     },
     {
       "Metric": "Data Loss (%)",
       "Flink": 0.0,
-      "Spark": 0.0,
-      "Better": "Tie"
+      "Spark": 74.46,
+      "Better": "Flink"
     },
     {
       "Metric": "Duplicate Events (%)",
-      "Flink": 79.23,
-      "Spark": 7.27,
+      "Flink": 98.41,
+      "Spark": 0.0,
       "Better": "Spark"
     }
   ]

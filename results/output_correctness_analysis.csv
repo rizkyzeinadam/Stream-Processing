@@ -1,3 +1,0 @@
-Engine,Duplicate Events,Duplicate Percentage,Duplicate Source,Correctness Assessment
-Flink,70974,79.2314521530523,"Observed duplicate patterns are likely influenced by: 1. repetitive IDS traffic characteristics, 2. temporary replay during checkpoint recovery, 3. transient event reprocessing during failover.",Natural repetitive traffic or temporary replay. No permanent correctness violations confirmed.
-Spark,6504,7.270508053621598,"Observed duplicate patterns are likely influenced by: 1. repetitive IDS traffic characteristics, 2. temporary replay during checkpoint recovery, 3. transient event reprocessing during failover.",Natural repetitive traffic or temporary replay. No permanent correctness violations confirmed.
