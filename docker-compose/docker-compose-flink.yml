@@ -112,6 +112,27 @@ services:
     depends_on:
       - prometheus
 
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.47.0
+    container_name: flink-cadvisor
+    privileged: true
+    ports:
+      - "8088:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    networks:
+      - flink-network
+    mem_limit: 256m
+    command:
+      - '--housekeeping_interval=5s'
+      - '--docker_only=true'
+      - '--disable_metrics=disk,network,tcp,udp,percpu,sched,process'
+
   jobmanager:
     image: flink:1.17.1-scala_2.12-java11
     container_name: flink-jobmanager

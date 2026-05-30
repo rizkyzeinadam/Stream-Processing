@@ -106,6 +106,27 @@ services:
     depends_on:
       - prometheus
 
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.47.0
+    container_name: spark-cadvisor
+    privileged: true
+    ports:
+      - "8089:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    networks:
+      - spark-network
+    mem_limit: 256m
+    command:
+      - '--housekeeping_interval=5s'
+      - '--docker_only=true'
+      - '--disable_metrics=disk,network,tcp,udp,percpu,sched,process'
+
   spark-master:
     image: apache/spark:v3.4.0
     container_name: spark-driver
@@ -135,6 +156,8 @@ services:
     volumes:
       - ./spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
       - ./metrics.properties:/opt/spark/conf/metrics.properties:ro
+      - ./spark-checkpoints:/tmp/spark-checkpoints
+      - ./spark-checkpoints:/tmp/spark-query-checkpoints
 
   spark-worker1:
     image: apache/spark:v3.4.0
@@ -168,6 +191,8 @@ services:
     volumes:
       - ./spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
       - ./metrics.properties:/opt/spark/conf/metrics.properties:ro
+      - ./spark-checkpoints:/tmp/spark-checkpoints
+      - ./spark-checkpoints:/tmp/spark-query-checkpoints
 
   spark-worker2:
     image: apache/spark:v3.4.0
@@ -201,6 +226,8 @@ services:
     volumes:
       - ./spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
       - ./metrics.properties:/opt/spark/conf/metrics.properties:ro
+      - ./spark-checkpoints:/tmp/spark-checkpoints
+      - ./spark-checkpoints:/tmp/spark-query-checkpoints
 
 networks:
   spark-network:

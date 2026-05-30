@@ -137,6 +137,32 @@
     },
     {
       "type": "timeseries",
+      "title": "CPU per Container (cAdvisor)",
+      "datasource": "Prometheus",
+      "targets": [
+        { "expr": "rate(container_cpu_usage_seconds_total{name=\"flink-taskmanager1\"}[1m]) * 100", "refId": "A", "legendFormat": "{{name}}" },
+        { "expr": "rate(container_cpu_usage_seconds_total{name=\"flink-taskmanager2\"}[1m]) * 100", "refId": "B", "legendFormat": "{{name}}" },
+        { "expr": "rate(container_cpu_usage_seconds_total{name=\"flink-jobmanager\"}[1m]) * 100", "refId": "C", "legendFormat": "{{name}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 56 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory per Container (cAdvisor)",
+      "datasource": "Prometheus",
+      "targets": [
+        { "expr": "container_memory_usage_bytes{name=\"flink-taskmanager1\"} / 1048576", "refId": "A", "legendFormat": "{{name}}" },
+        { "expr": "container_memory_usage_bytes{name=\"flink-taskmanager2\"} / 1048576", "refId": "B", "legendFormat": "{{name}}" },
+        { "expr": "container_memory_usage_bytes{name=\"flink-jobmanager\"} / 1048576", "refId": "C", "legendFormat": "{{name}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "MIB" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 56 }
+    },
+    {
+      "type": "timeseries",
       "title": "Memory Usage",
       "datasource": "Prometheus",
       "targets": [

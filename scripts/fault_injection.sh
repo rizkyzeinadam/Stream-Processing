@@ -161,6 +161,7 @@ get_container_name() {
             case "$target" in
                 worker1|taskmanager1) echo "flink-taskmanager1" ;;
                 worker2|taskmanager2) echo "flink-taskmanager2" ;;
+                jobmanager|central) echo "flink-jobmanager" ;;
                 kafka) echo "flink-kafka" ;;
                 *) echo "flink-jobmanager" ;;
             esac
@@ -169,8 +170,9 @@ get_container_name() {
             case "$target" in
                 worker1) echo "spark-worker1" ;;
                 worker2) echo "spark-worker2" ;;
+                driver|master|central) echo "spark-driver" ;;
                 kafka) echo "spark-kafka" ;;
-                *) echo "spark-master" ;;
+                *) echo "spark-driver" ;;
             esac
             ;;
     esac

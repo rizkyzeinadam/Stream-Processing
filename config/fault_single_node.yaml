@@ -1,0 +1,9 @@
+cascading_faults:
+  - time: 120
+    action: "kill_worker"
+    target: "worker1"
+    description: "Kill single worker node, no restart (permanent failure)"
+
+recovery_detection_threshold: 2.0
+max_recovery_time: 300
+check_interval: 1

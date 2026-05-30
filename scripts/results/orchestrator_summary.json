@@ -1,0 +1,68 @@
+{
+  "timestamp": "2026-05-18T14:09:46.843978",
+  "total_runs": 6,
+  "successful": 6,
+  "failed": 0,
+  "results": [
+    {
+      "scenario_name": "flink",
+      "run_index": 1,
+      "start_time": "2026-05-18T14:09:46.842853",
+      "end_time": "2026-05-18T14:09:46.842973",
+      "output_csv": "/Users/rizkyzeinadam/Documents/Percobaan Tesis/scripts/metrics/run01_flink_dynamic_load.csv",
+      "success": true,
+      "error": null,
+      "duration_actual": 0.0
+    },
+    {
+      "scenario_name": "spark",
+      "run_index": 1,
+      "start_time": "2026-05-18T14:09:46.843016",
+      "end_time": "2026-05-18T14:09:46.843168",
+      "output_csv": "/Users/rizkyzeinadam/Documents/Percobaan Tesis/scripts/metrics/run01_spark_dynamic_load.csv",
+      "success": true,
+      "error": null,
+      "duration_actual": 0.0
+    },
+    {
+      "scenario_name": "single-node-flink",
+      "run_index": 1,
+      "start_time": "2026-05-18T14:09:46.843302",
+      "end_time": "2026-05-18T14:09:46.843413",
+      "output_csv": "/Users/rizkyzeinadam/Documents/Percobaan Tesis/scripts/metrics/run01_flink_single_node_failure.csv",
+      "success": true,
+      "error": null,
+      "duration_actual": 0.0
+    },
+    {
+      "scenario_name": "single-node-spark",
+      "run_index": 1,
+      "start_time": "2026-05-18T14:09:46.843449",
+      "end_time": "2026-05-18T14:09:46.843545",
+      "output_csv": "/Users/rizkyzeinadam/Documents/Percobaan Tesis/scripts/metrics/run01_spark_single_node_failure.csv",
+      "success": true,
+      "error": null,
+      "duration_actual": 0.0
+    },
+    {
+      "scenario_name": "central-flink",
+      "run_index": 1,
+      "start_time": "2026-05-18T14:09:46.843579",
+      "end_time": "2026-05-18T14:09:46.843742",
+      "output_csv": "/Users/rizkyzeinadam/Documents/Percobaan Tesis/scripts/metrics/run01_flink_central_component_failure.csv",
+      "success": true,
+      "error": null,
+      "duration_actual": 0.0
+    },
+    {
+      "scenario_name": "central-spark",
+      "run_index": 1,
+      "start_time": "2026-05-18T14:09:46.843837",
+      "end_time": "2026-05-18T14:09:46.843960",
+      "output_csv": "/Users/rizkyzeinadam/Documents/Percobaan Tesis/scripts/metrics/run01_spark_central_component_failure.csv",
+      "success": true,
+      "error": null,
+      "duration_actual": 0.0
+    }
+  ]
+}

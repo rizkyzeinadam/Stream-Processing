@@ -1,0 +1,13 @@
+cascading_faults:
+  - time: 120
+    action: "kill_worker"
+    target: "jobmanager"
+    description: "Kill central component (JobManager/Master)"
+  - time: 180
+    action: "restart_node"
+    target: "jobmanager"
+    description: "Restart central component after 60s outage"
+
+recovery_detection_threshold: 2.0
+max_recovery_time: 300
+check_interval: 1

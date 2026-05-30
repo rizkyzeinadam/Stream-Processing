@@ -13,6 +13,7 @@ import math
 from datetime import datetime
 from typing import Dict, List, Any
 import json
+import yaml
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,6 +36,7 @@ class MetricsCollector:
         self.start_time = None
         self.recovery_start_time = None
         self.last_recovery_time = 0.0
+        self.default_load_rate = 100
         logger.info(f"Connected to Prometheus at {prometheus_url}")
     
     def query_prometheus(self, query: str) -> Any:
@@ -132,6 +134,28 @@ class MetricsCollector:
             except (IndexError, ValueError):
                 return 0.0
         return 0.0
+
+    def get_cpu_per_container(self, container_name: str) -> float:
+        """Get CPU usage for a specific container via cAdvisor metrics."""
+        queries = [
+            f'rate(container_cpu_usage_seconds_total{{name="{container_name}"}}[1m]) * 100',
+            f'rate(container_cpu_usage_seconds_total{{container="{container_name}"}}[1m]) * 100',
+            f'rate(container_cpu_usage_seconds_total{{container_label_com_docker_compose_service="{container_name}"}}[1m]) * 100',
+        ]
+        result = self.query_first_value(queries)
+        return result if result >= 0 else 0.0
+
+    def get_framework_cpu(self, framework: str) -> dict:
+        """Get CPU usage for all containers in a framework."""
+        containers = {
+            'flink': ['flink-jobmanager', 'flink-taskmanager1', 'flink-taskmanager2'],
+            'spark': ['spark-driver', 'spark-worker1', 'spark-worker2'],
+        }
+        result = {}
+        for container in containers.get(framework, []):
+            result[container] = self.get_cpu_per_container(container)
+        result['total'] = sum(result.values())
+        return result
     
     def get_kafka_lag(self) -> float:
         """Get Kafka consumer lag"""
@@ -193,6 +217,25 @@ class MetricsCollector:
                    f"Lag: {metric['kafka_lag']:.0f}")
         
         return metric
+
+    def get_current_load_rate_from_config(self, elapsed: float, load_config: dict) -> int:
+        """Return the load rate for the current elapsed time using load.yaml."""
+        if not load_config:
+            return self.default_load_rate
+
+        load_pattern = load_config.get('load_pattern', [])
+        if not load_pattern:
+            return self.default_load_rate
+
+        time_acc = 0
+        for stage in load_pattern:
+            stage_duration = int(stage.get('duration', 0))
+            stage_rate = int(stage.get('rate', self.default_load_rate))
+            if elapsed < time_acc + stage_duration:
+                return stage_rate
+            time_acc += stage_duration
+
+        return int(load_pattern[-1].get('rate', self.default_load_rate))
     
     def save_metrics_csv(self, output_file: str):
         """Save collected metrics to CSV file"""
@@ -232,6 +275,20 @@ class MetricsCollector:
         
         logger.info(f"Continuous collection complete. Collected {len(self.metrics)} metric samples")
 
+    def run_dynamic_collection(self, duration: int = 120, interval: int = 1, load_config: dict = None):
+        """Collect metrics using the active load rate from a YAML load config."""
+        logger.info(f"Starting dynamic collection for {duration}s with {interval}s interval")
+        self.start_collection()
+
+        elapsed = 0
+        while elapsed < duration:
+            elapsed = time.time() - self.start_time
+            current_load_rate = self.get_current_load_rate_from_config(elapsed, load_config)
+            self.collect_metrics(current_load_rate)
+            time.sleep(interval)
+
+        logger.info(f"Dynamic collection complete. Collected {len(self.metrics)} metric samples")
+
 
 def main():
     parser = argparse.ArgumentParser(description='Metrics Collector for Stream Processing')
@@ -240,15 +297,30 @@ def main():
     parser.add_argument('--duration', type=int, default=120, help='Collection duration in seconds')
     parser.add_argument('--interval', type=int, default=1, help='Collection interval in seconds')
     parser.add_argument('--load-rate', type=int, default=100, help='Current load rate (msg/s)')
+    parser.add_argument('--load-config', help='Path to load.yaml for dynamic load rate')
     
     args = parser.parse_args()
     
     collector = MetricsCollector(prometheus_url=args.prometheus)
-    collector.run_continuous_collection(
-        duration=args.duration,
-        interval=args.interval,
-        load_rate=args.load_rate
-    )
+    if args.load_config:
+        try:
+            with open(args.load_config, 'r', encoding='utf-8') as file_handle:
+                load_config = yaml.safe_load(file_handle) or {}
+        except Exception as exc:
+            logger.error(f"Error loading dynamic load config {args.load_config}: {exc}")
+            raise SystemExit(1)
+
+        collector.run_dynamic_collection(
+            duration=args.duration,
+            interval=args.interval,
+            load_config=load_config,
+        )
+    else:
+        collector.run_continuous_collection(
+            duration=args.duration,
+            interval=args.interval,
+            load_rate=args.load_rate,
+        )
     collector.save_metrics_csv(args.output)
 
 

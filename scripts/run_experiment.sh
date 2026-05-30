@@ -417,7 +417,7 @@ run_flink_experiment() {
         --output "$METRICS_DIR/flink_metrics.csv" \
         --duration "$METRICS_DURATION" \
         --interval 1 \
-        --load-rate 100 &
+        --load-config "$CONFIG_DIR/load.yaml" &
     METRICS_PID=$!
     log "Metrics started"
 
@@ -494,7 +494,7 @@ run_spark_experiment() {
         --output "$METRICS_DIR/spark_metrics.csv" \
         --duration "$METRICS_DURATION" \
         --interval 1 \
-        --load-rate 100 &
+        --load-config "$CONFIG_DIR/load.yaml" &
     METRICS_PID=$!
     log "Metrics started"
 
@@ -514,6 +514,76 @@ run_spark_experiment() {
     
     sleep 10
     success "Spark experiment complete"
+}
+
+run_fault_scenario() {
+    local system="$1"
+    local fault_config="$2"
+    local output_csv="$3"
+
+    log "=========================================="
+    log "Starting ${system^^} Fault Scenario"
+    log "=========================================="
+
+    stop_all
+    cd "$DOCKER_COMPOSE_DIR"
+    if [ "$system" = "flink" ]; then
+        docker-compose -f docker-compose-flink.yml up -d
+        sleep 15
+        ensure_flink_stack_ready
+        create_kafka_topic "flink-kafka"
+        build_flink_job_jar
+        deploy_flink_streaming_job
+    else
+        docker-compose -f docker-compose-spark.yml up -d
+        sleep 15
+        ensure_spark_stack_ready
+        create_kafka_topic "spark-kafka"
+        build_spark_job_jar
+        deploy_spark_streaming_job
+    fi
+
+    log "Scenario output CSV: $output_csv"
+    log "Scenario fault config: $fault_config"
+
+    cd "$SCRIPTS_DIR"
+    python3 producer.py \
+        --broker "localhost:9092" \
+        --topic "$KAFKA_TOPIC" \
+        --config "$CONFIG_DIR/load.yaml" \
+        > "/tmp/${system}_fault_producer.log" 2>&1 &
+    PRODUCER_PID=$!
+
+    wait_for_producer_ready "/tmp/${system}_fault_producer.log" "$PRODUCER_PID"
+    sleep "$WARMUP_SECONDS"
+
+    python3 "$SCRIPTS_DIR/metrics_collector.py" \
+        --prometheus "http://localhost:9090" \
+        --output "$output_csv" \
+        --duration "$METRICS_DURATION" \
+        --interval 1 \
+        --load-config "$CONFIG_DIR/load.yaml" &
+    METRICS_PID=$!
+
+    bash "$SCRIPTS_DIR/fault_injection.sh" "$system" "$fault_config" &
+    FAULT_PID=$!
+
+    wait $PRODUCER_PID 2>/dev/null || true
+    wait $FAULT_PID 2>/dev/null || true
+    wait $METRICS_PID 2>/dev/null || true
+
+    cleanup
+    success "${system^^} fault scenario complete"
+}
+
+run_single_node_failure() {
+    local system="$1"
+    run_fault_scenario "$system" "$CONFIG_DIR/fault_single_node.yaml" "$METRICS_DIR/${system}_single_node_failure.csv"
+}
+
+run_central_component_failure() {
+    local system="$1"
+    run_fault_scenario "$system" "$CONFIG_DIR/fault_central_component.yaml" "$METRICS_DIR/${system}_central_component_failure.csv"
 }
 
 # Generate reports
@@ -587,27 +657,74 @@ cleanup() {
 }
 
 # Main execution
+usage() {
+    echo "Usage: $0 [SCENARIO]"
+    echo ""
+    echo "Scenarios:"
+    echo "  flink              - Flink dynamic load + multi-fault cascading"
+    echo "  spark              - Spark dynamic load + multi-fault cascading"
+    echo "  single-node-flink  - Flink single TaskManager failure (no restart)"
+    echo "  single-node-spark  - Spark single Worker failure (no restart)"
+    echo "  central-flink      - Flink JobManager failure + recovery"
+    echo "  central-spark      - Spark Master/Driver failure + recovery"
+    echo "  all-scenarios      - Run all scenarios sequentially"
+    echo ""
+    echo "Example: $0 central-flink"
+}
+
 main() {
     log "=========================================="
     log "Stream Processing Fault Recovery Evaluation"
     log "Synchronized Experiment Execution"
     log "=========================================="
+
+    if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+        usage
+        exit 0
+    fi
     
     verify_environment
     setup_directories
     setup_configs
     display_synchronization_summary
     
-    # Check if user wants to run specific system
-    if [ "$1" == "flink" ]; then
+    case "${1:-both}" in
+        flink)
         stop_all
         run_flink_experiment
         cleanup
-    elif [ "$1" == "spark" ]; then
+            ;;
+        spark)
         stop_all
         run_spark_experiment
         cleanup
-    elif [ "$1" == "both" ] || [ -z "$1" ]; then
+            ;;
+        single-node-flink)
+        run_single_node_failure "flink"
+            ;;
+        single-node-spark)
+        run_single_node_failure "spark"
+            ;;
+        central-flink)
+        run_central_component_failure "flink"
+            ;;
+        central-spark)
+        run_central_component_failure "spark"
+            ;;
+        all-scenarios)
+        stop_all
+        run_flink_experiment
+        run_spark_experiment
+        run_single_node_failure "flink"
+        run_single_node_failure "spark"
+        run_central_component_failure "flink"
+        run_central_component_failure "spark"
+        cleanup
+        generate_reports
+        generate_publication_figures
+        display_results
+            ;;
+        both)
         # Run both experiments with synchronized conditions
         stop_all
         run_flink_experiment
@@ -616,11 +733,13 @@ main() {
         generate_reports
         generate_publication_figures
         display_results
-    else
-        error "Unknown option: $1"
-        echo "Usage: FLINK_MODE=[A|B] $0 [flink|spark|both]"
+            ;;
+        *)
+        error "Unknown option: ${1:-}"
+        usage
         exit 1
-    fi
+            ;;
+    esac
     
     log "=========================================="
     log "Experiment execution complete"

@@ -41,6 +41,30 @@
     },
     {
       "type": "timeseries",
+      "title": "CPU per Container (cAdvisor)",
+      "datasource": "Prometheus",
+      "targets": [
+        { "expr": "sum by (name) (rate(container_cpu_usage_seconds_total{name=~\"spark-worker.*|spark-driver\"}[1m])) * 100", "refId": "A", "legendFormat": "{{name}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 50 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory per Container (cAdvisor)",
+      "datasource": "Prometheus",
+      "targets": [
+        { "expr": "container_memory_usage_bytes{name=\"spark-worker1\"} / 1048576", "refId": "A", "legendFormat": "{{name}}" },
+        { "expr": "container_memory_usage_bytes{name=\"spark-worker2\"} / 1048576", "refId": "B", "legendFormat": "{{name}}" },
+        { "expr": "container_memory_usage_bytes{name=\"spark-driver\"} / 1048576", "refId": "C", "legendFormat": "{{name}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "MIB" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 50 }
+    },
+    {
+      "type": "timeseries",
       "title": "Memory Usage",
       "datasource": "Prometheus",
       "targets": [{ "expr": "(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100", "refId": "A" }],

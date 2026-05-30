@@ -27,6 +27,12 @@ scrape_configs:
     static_configs:
       - targets: ['kafka-exporter:9308']
 
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['spark-cadvisor:8080']
+    scrape_interval: 5s
+    metrics_path: /metrics
+
   - job_name: 'node-exporter'
     static_configs:
       - targets: ['node-exporter:9100']
