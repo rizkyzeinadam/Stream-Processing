@@ -445,7 +445,7 @@ def fig410():
                 f'{bar.get_height():.1f}%', ha='center', va='bottom', fontsize=9, fontweight='bold')
 
     ax.set_xticks(x); ax.set_xticklabels(scenarios, fontsize=10)
-    ax.set_ylabel('Estimated Data Loss (%)')
+    ax.set_ylabel('Throughput Deficit (%)')
     ax.set_title('Figure 4.10. Estimated Data Loss — Numerical Integral Reconciliation\n'
                  'max(0, sum(load_rate*dt) − sum(throughput*dt)) / sum(load_rate*dt) × 100%', fontsize=11)
     ax.legend(fontsize=10)
