@@ -174,7 +174,7 @@ services:
       - spark://spark-master:7077
     environment:
       - SPARK_WORKER_MEMORY=1200m
-      - SPARK_WORKER_CORES=2
+      - SPARK_WORKER_CORES=1
       - SPARK_LOCAL_DIRS=/tmp/spark-local
       - PYSPARK_PYTHON=python3
       - SPARK_DAEMON_JAVA_OPTS=-Dspark.ui.prometheus.enabled=true
@@ -209,7 +209,7 @@ services:
       - spark://spark-master:7077
     environment:
       - SPARK_WORKER_MEMORY=1200m
-      - SPARK_WORKER_CORES=2
+      - SPARK_WORKER_CORES=1
       - SPARK_LOCAL_DIRS=/tmp/spark-local
       - PYSPARK_PYTHON=python3
       - SPARK_DAEMON_JAVA_OPTS=-Dspark.ui.prometheus.enabled=true
