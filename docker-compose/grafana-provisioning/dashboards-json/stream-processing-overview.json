@@ -4,7 +4,7 @@
   "tags": ["flink", "stream", "kafka", "prometheus"],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 2,
+  "version": 3,
   "refresh": "5s",
   "time": {
     "from": "now-15m",
@@ -31,52 +31,19 @@
   },
   "panels": [
     {
-      "type": "stat",
-      "title": "Prometheus Up",
-      "datasource": "Prometheus",
-      "targets": [
-        {
-          "expr": "up{job=\"prometheus\"}",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "min": 0,
-          "max": 1,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "red", "value": null },
-              { "color": "green", "value": 1 }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "gridPos": { "h": 8, "w": 4, "x": 0, "y": 0 }
-    },
-    {
       "type": "timeseries",
-      "title": "Kafka Lag",
+      "title": "Kafka Lag (records lead)",
       "datasource": "Prometheus",
       "targets": [
         {
-          "expr": "(sum(kafka_consumergroup_lag) or sum(kafka_consumergroup_lag_sum)) or on() vector(0)",
-          "refId": "A"
+          "expr": "sum(flink_taskmanager_job_task_operator_KafkaSourceReader_KafkaConsumer_records_lead_min)",
+          "refId": "A",
+          "legendFormat": "lead_min"
+        },
+        {
+          "expr": "sum(flink_taskmanager_job_task_operator_KafkaSourceReader_KafkaConsumer_records_lead_max)",
+          "refId": "B",
+          "legendFormat": "lead_max"
         }
       ],
       "fieldConfig": {
@@ -115,7 +82,7 @@
     },
     {
       "type": "timeseries",
-      "title": "CPU Usage",
+      "title": "Host CPU Usage (info only)",
       "datasource": "Prometheus",
       "targets": [
         {
@@ -163,7 +130,7 @@
     },
     {
       "type": "timeseries",
-      "title": "Memory Usage",
+      "title": "Host Memory Usage (info only)",
       "datasource": "Prometheus",
       "targets": [
         {
@@ -213,7 +180,7 @@
       "datasource": "Prometheus",
       "targets": [
         {
-          "expr": "sum by (taskmanager) (flink_taskmanager_job_task_numRecordsInPerSecond or on (taskmanager) (up{job=\"flink\"} * 0))",
+          "expr": "sum by (taskmanager) (flink_taskmanager_job_task_operator_KafkaSourceReader_KafkaConsumer_records_consumed_rate or on (taskmanager) (up{job=\"flink\"} * 0))",
           "refId": "A",
           "legendFormat": "{{taskmanager}}"
         }
@@ -236,7 +203,7 @@
       "datasource": "Prometheus",
       "targets": [
         {
-          "expr": "sum by (taskmanager) (flink_taskmanager_job_task_numRecordsInPerSecond{taskmanager=\"TM1\"} or on (taskmanager) (up{job=\"flink\",taskmanager=\"TM1\"} * 0))",
+          "expr": "sum by (taskmanager) (flink_taskmanager_job_task_operator_KafkaSourceReader_KafkaConsumer_records_consumed_rate{taskmanager=\"TM1\"} or on (taskmanager) (up{job=\"flink\",taskmanager=\"TM1\"} * 0))",
           "refId": "A",
           "legendFormat": "TM1"
         }
@@ -259,7 +226,7 @@
       "datasource": "Prometheus",
       "targets": [
         {
-          "expr": "last_over_time((sum by (taskmanager) (flink_taskmanager_job_task_numRecordsInPerSecond{taskmanager=\"TM2\"}))[5m:])",
+          "expr": "sum by (taskmanager) (flink_taskmanager_job_task_operator_KafkaSourceReader_KafkaConsumer_records_consumed_rate{taskmanager=\"TM2\"} or on (taskmanager) (up{job=\"flink\",taskmanager=\"TM2\"} * 0))",
           "refId": "A",
           "legendFormat": "TM2"
         }
@@ -282,7 +249,7 @@
       "datasource": "Prometheus",
       "targets": [
         {
-          "expr": "max by (taskmanager) (((sum by (taskmanager) (flink_taskmanager_job_task_numRecordsInPerSecond) > bool 0) or on (taskmanager) (up{job=\"flink\"} * 0)))",
+          "expr": "max by (taskmanager) (((sum by (taskmanager) (flink_taskmanager_job_task_operator_KafkaSourceReader_KafkaConsumer_records_consumed_rate) > bool 0) or on (taskmanager) (up{job=\"flink\"} * 0)))",
           "refId": "A",
           "legendFormat": "{{taskmanager}}"
         }

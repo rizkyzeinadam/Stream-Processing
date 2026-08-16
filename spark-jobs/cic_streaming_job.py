@@ -11,7 +11,8 @@ from pyspark.sql.functions import (
     col, from_json,
     window, count, avg, max, min,
     current_timestamp,
-    unix_timestamp
+    unix_micros,
+    to_timestamp
 )
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType
 
@@ -40,8 +41,8 @@ def create_kafka_source(spark, bootstrap_servers, topic, group_id):
         .format("kafka") \
         .option("kafka.bootstrap.servers", bootstrap_servers) \
         .option("subscribe", topic) \
-        .option("startingOffsets", "latest") \
-        .option("failOnDataLoss", "false") \
+        .option("startingOffsets", "earliest") \
+        .option("failOnDataLoss", "true") \
         .load()
     
     # Cast value to string and add timestamp
@@ -74,11 +75,10 @@ def process_stream(df, bootstrap_servers, topic, group_id):
             current_timestamp().alias("process_timestamp")
         )
         
-        # Calculate latency
+        # Calculate latency with microseconds-level precision.
         df_with_latency = df_parsed.withColumn(
             "latency_ms",
-            (unix_timestamp(col("process_timestamp")) * 1000 - 
-             unix_timestamp(col("kafka_timestamp")) * 1000).cast("long")
+            ((unix_micros(col("process_timestamp")) - unix_micros(col("kafka_timestamp"))) / 1000.0).cast("double")
         )
         
         # Window aggregation for metrics (1-minute windows)

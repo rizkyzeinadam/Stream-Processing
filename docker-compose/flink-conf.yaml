@@ -23,7 +23,7 @@ execution.checkpointing.timeout: 600000
 execution.checkpointing.max-concurrent-checkpoints: 1
 taskmanager.state.local.recovery: true
 restart-strategy: fixed-delay
-restart-strategy.fixed-delay.attempts: 10
+restart-strategy.fixed-delay.attempts: 1000   # ← BERUBAH: dari 10 ke 1000 (biar job nggak FAILED pas nunggu TM1 balik)
 restart-strategy.fixed-delay.delay: 5 s
 
 # Network

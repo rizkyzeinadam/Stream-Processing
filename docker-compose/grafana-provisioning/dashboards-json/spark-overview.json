@@ -20,9 +20,10 @@
     },
     {
       "type": "timeseries",
-      "title": "Kafka Consumer Lag (Exporter)",
+      "title": "Kafka Consumer Lag",
       "datasource": "Prometheus",
-      "targets": [{ "expr": "(sum(kafka_consumergroup_lag) or sum(kafka_consumergroup_lag_sum)) or on() vector(0)", "refId": "A" }],
+      "targets": [{ "expr": "spark_streaming_backlog", "refId": "A", "legendFormat": "{{group}}" }],
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
       "gridPos": { "h": 6, "w": 10, "x": 4, "y": 0 }
     },
     {

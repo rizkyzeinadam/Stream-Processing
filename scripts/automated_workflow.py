@@ -90,22 +90,25 @@ class WorkflowAutomator:
                 browser = p.chromium.launch(headless=True)
                 page = browser.new_page()
                 
+                flink_grafana_url = os.getenv("FLINK_GRAFANA_URL", "http://localhost:3001")
+                spark_grafana_url = os.getenv("SPARK_GRAFANA_URL", "http://localhost:3002")
+
                 # Try Flink Grafana
                 try:
-                    page.goto("http://localhost:3000/d/flink-overview", timeout=10000)
+                    page.goto(f"{flink_grafana_url}/d/flink-overview", timeout=10000)
                     time.sleep(5)  # wait for load
                     page.screenshot(path=str(SCREENSHOTS_DIR / "flink_final_dashboard.png"), full_page=True)
                     print(f"Saved {SCREENSHOTS_DIR}/flink_final_dashboard.png")
-                except Exception as e:
+                except Exception:
                     print("Could not capture Flink dashboard (is Grafana running?).")
                 
                 # Try Spark Grafana
                 try:
-                    page.goto("http://localhost:3000/d/spark-overview", timeout=10000)
+                    page.goto(f"{spark_grafana_url}/d/spark-overview", timeout=10000)
                     time.sleep(5)
                     page.screenshot(path=str(SCREENSHOTS_DIR / "spark_final_dashboard.png"), full_page=True)
                     print(f"Saved {SCREENSHOTS_DIR}/spark_final_dashboard.png")
-                except Exception as e:
+                except Exception:
                     print("Could not capture Spark dashboard (is Grafana running?).")
                     
                 browser.close()
@@ -214,15 +217,15 @@ class WorkflowAutomator:
         plt.savefig(RESULTS_DIR / "correctness_comparison_chart.png")
         plt.close()
 
-        # Data Loss Comparison Chart
+        # Throughput Deficit Comparison Chart
         fig, ax = plt.subplots(figsize=(6,4))
         dataloss_pct = [row["Data Loss Percentage"] for row in dataloss_rows]
         missing_ev = [row["Missing Events"] for row in dataloss_rows]
         ax.bar(engines, dataloss_pct, color=["#2ca02c", "#d62728"])
         for i, v in enumerate(missing_ev):
             ax.text(i, dataloss_pct[i]+1, f"{v} ev", ha='center', va='bottom', fontsize=10)
-        ax.set_ylabel("Data Loss (%)")
-        ax.set_title("Data Loss Comparison: Flink vs Spark")
+        ax.set_ylabel("Throughput Deficit (%)")
+        ax.set_title("Throughput Deficit Comparison: Flink vs Spark")
         plt.tight_layout()
         plt.savefig(RESULTS_DIR / "data_loss_chart.png")
         plt.close()
@@ -283,10 +286,10 @@ class WorkflowAutomator:
             correctness_md += f"- Assessment: {row['Correctness Assessment']}\n\n"
         correctness_md += "![Duplicate Event Comparison](correctness_comparison_chart.png)\n\n"
 
-        dataloss_md = f"""## Data Loss Analysis\n\n"""
+        dataloss_md = f"""## Throughput Deficit Analysis\n\n"""
         for row in dataloss_rows:
-            dataloss_md += f"**{row['Engine']}**: Data Loss = {row['Missing Events']} events ({row['Data Loss Percentage']:.2f}%)\n\n"
-        dataloss_md += "![Data Loss Comparison](data_loss_chart.png)\n\n"
+            dataloss_md += f"**{row['Engine']}**: Throughput Deficit = {row['Missing Events']} events ({row['Data Loss Percentage']:.2f}%)\n\n"
+        dataloss_md += "![Throughput Deficit Comparison](data_loss_chart.png)\n\n"
 
         # Append to technical_analysis.md, bab4_draft.md, comparison.md
         for fname in ["technical_analysis.md", "bab4_draft.md", "comparison.md"]:

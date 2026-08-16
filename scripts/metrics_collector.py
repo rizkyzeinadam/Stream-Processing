@@ -38,7 +38,21 @@ class MetricsCollector:
         self.last_recovery_time = 0.0
         self.default_load_rate = 100
         logger.info(f"Connected to Prometheus at {prometheus_url}")
-    
+
+    def check_prometheus_health(self, retries: int = 5, delay: float = 5.0) -> bool:
+        """Return True if Prometheus is reachable, retrying a few times."""
+        for attempt in range(1, retries + 1):
+            try:
+                response = requests.get(f"{self.prometheus_url}/-/healthy", timeout=10)
+                if response.status_code == 200:
+                    logger.info(f"Prometheus healthy (attempt {attempt})")
+                    return True
+            except Exception as e:
+                logger.error(f"Health check attempt {attempt}/{retries} FAILED: {type(e).__name__}: {e}")
+            time.sleep(delay)
+        logger.error(f"Prometheus unreachable after {retries} attempts")
+        return False
+
     def query_prometheus(self, query: str) -> Any:
         """Query Prometheus for metrics"""
         try:
@@ -64,7 +78,7 @@ class MetricsCollector:
                         return value
                 except (IndexError, ValueError, KeyError, TypeError):
                     continue
-        return 0.0
+        return math.nan
     
     def query_range(self, query: str, start: float, end: float, step: str = '15s') -> Any:
         """Query Prometheus for metric range"""
@@ -86,20 +100,22 @@ class MetricsCollector:
             return None
     
     def get_throughput(self) -> float:
-        """Get current throughput (messages/sec)"""
+        """Get current throughput (messages/sec)."""
         return self.query_first_value([
-            'sum(flink_taskmanager_job_task_operator_records_consumed_rate)',
+            'sum(flink_taskmanager_job_task_operator_KafkaSourceReader_KafkaConsumer_records_consumed_rate)',
             'sum(flink_taskmanager_job_task_operator_numRecordsInPerSecond)',
             'sum(flink_taskmanager_job_task_operator_numRecordsOutPerSecond)',
             'sum(flink_taskmanager_job_task_numRecordsInPerSecond)',
             'sum(flink_taskmanager_job_task_numRecordsOutPerSecond)',
             'sum(flink_taskmanager_job_task_operator_numRecordsInPerSecond)',
             'sum(spark_streaming_throughput)',
+            'sum(spark_streaming_throughput_worker1 + spark_streaming_throughput_worker2)',
             'sum(rate(kafka_topic_partition_current_offset[30s]))',
         ])
+
     
     def get_latency(self) -> float:
-        """Get average latency (ms)"""
+        """Get average latency (ms)."""
         return self.query_first_value([
             'avg(flink_taskmanager_job_task_operator_fetch_latency_avg)',
             'avg(flink_taskmanager_job_latency_source_id_operator_id_operator_subtask_index_latency)',
@@ -107,33 +123,41 @@ class MetricsCollector:
             'avg(flink_taskmanager_job_latency)',
             'avg(flink_taskmanager_job_task_operator_average_record_delay_millis)',
             'avg(spark_streaming_latency)',
+            'avg(spark_streaming_latency_average)',
         ])
     
     def get_cpu_usage(self) -> float:
-        """Get CPU usage percentage"""
-        result = self.query_prometheus(
-            '100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[1m])) * 100)'
-        )
-        if result and result['data']['result']:
-            try:
-                value = float(result['data']['result'][0]['value'][1])
-                return max(0, min(100, value))
-            except (IndexError, ValueError):
-                return 0.0
-        return 0.0
-    
+        """Get aggregated CPU usage for the active framework via cAdvisor container metrics."""
+        framework = self.detect_framework()
+        cpu_metrics = self.get_framework_cpu(framework)
+        total = float(cpu_metrics.get('total', math.nan))
+        return total if math.isfinite(total) else math.nan
+
     def get_memory_usage(self) -> float:
-        """Get memory usage percentage"""
-        result = self.query_prometheus(
-            '(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100'
-        )
-        if result and result['data']['result']:
-            try:
-                value = float(result['data']['result'][0]['value'][1])
-                return max(0, min(100, value))
-            except (IndexError, ValueError):
-                return 0.0
-        return 0.0
+        """Get aggregated memory usage in MiB for the active framework via cAdvisor container metrics."""
+        framework = self.detect_framework()
+        memory_metrics = self.get_framework_memory(framework)
+        total = float(memory_metrics.get('total', math.nan))
+        return total if math.isfinite(total) else math.nan
+
+    def detect_framework(self) -> str:
+        """Infer the active framework from Prometheus scrape jobs.
+
+        The Flink Prometheus config exposes job 'flink'; the Spark config exposes
+        'spark-master'/'spark-worker1'/'spark-worker2'/'spark-app'. Keying off the
+        `up{}` targets (rather than a data metric) avoids misdetection when a metric
+        name differs or the stream is momentarily idle.
+        """
+        if self._has_result('up{job="flink"}'):
+            return 'flink'
+        if self._has_result('up{job=~"spark-master|spark-worker1|spark-worker2|spark-app"}'):
+            return 'spark'
+        return 'spark'
+
+    def _has_result(self, query: str) -> bool:
+        """Return True if the Prometheus query returns at least one result series."""
+        result = self.query_prometheus(query)
+        return bool(result and result.get('data', {}).get('result'))
 
     def get_cpu_per_container(self, container_name: str) -> float:
         """Get CPU usage for a specific container via cAdvisor metrics."""
@@ -143,7 +167,7 @@ class MetricsCollector:
             f'rate(container_cpu_usage_seconds_total{{container_label_com_docker_compose_service="{container_name}"}}[1m]) * 100',
         ]
         result = self.query_first_value(queries)
-        return result if result >= 0 else 0.0
+        return result if math.isfinite(result) and result >= 0 else 0.0
 
     def get_framework_cpu(self, framework: str) -> dict:
         """Get CPU usage for all containers in a framework."""
@@ -154,22 +178,60 @@ class MetricsCollector:
         result = {}
         for container in containers.get(framework, []):
             result[container] = self.get_cpu_per_container(container)
-        result['total'] = sum(result.values())
+        cpu_values = list(result.values())
+        result['total'] = sum(cpu_values) / len(cpu_values) if cpu_values else math.nan
+        return result
+
+    def get_memory_per_container(self, container_name: str) -> float:
+        """Get memory usage in MiB for a specific container via cAdvisor.
+
+        Reports absolute usage (not percentage-of-limit) because this cAdvisor
+        deployment does not export container_spec_memory_limit_bytes, so a
+        limit-based percentage would always be NaN -> 0.
+        """
+        queries = [
+            f'container_memory_usage_bytes{{name="{container_name}"}} / 1048576',
+            f'container_memory_usage_bytes{{container="{container_name}"}} / 1048576',
+            f'container_memory_usage_bytes{{container_label_com_docker_compose_service="{container_name}"}} / 1048576',
+        ]
+        result = self.query_first_value(queries)
+        return result if math.isfinite(result) and result >= 0 else 0.0
+
+    def get_framework_memory(self, framework: str) -> dict:
+        """Get memory usage in MiB for all containers in a framework."""
+        containers = {
+            'flink': ['flink-jobmanager', 'flink-taskmanager1', 'flink-taskmanager2'],
+            'spark': ['spark-driver', 'spark-worker1', 'spark-worker2'],
+        }
+        result = {}
+        for container in containers.get(framework, []):
+            result[container] = self.get_memory_per_container(container)
+        cpu_values = list(result.values())
+        result['total'] = sum(result.values()) if cpu_values else math.nan
         return result
     
     def get_kafka_lag(self) -> float:
-        """Get Kafka consumer lag"""
+        """Get the active backlog for the current framework.
+
+        Flink: (produced offset) - (consumed counter), not records_lead_min
+        which over-counts after job restart (observed ~400k false lag).
+        NOTE: records_consumed_total resets on job restart, so values after a
+        fault are an upper-bound estimate.
+        """
         return self.query_first_value([
+            'sum(kafka_topic_partition_current_offset{topic="cic-topic"}) - sum(flink_taskmanager_job_task_operator_KafkaSourceReader_KafkaConsumer_records_consumed_total)',
+            'sum(flink_taskmanager_job_task_operator_KafkaSourceReader_KafkaConsumer_records_lead_min)',
+            'sum(spark_streaming_backlog)',
+            'sum(kafka_consumergroup_lag{group="spark-group"})',
+            'sum(kafka_consumergroup_lag{group="flink-group"})',
             'sum(kafka_consumergroup_lag)',
-            'sum(flink_taskmanager_job_task_operator_records_lag_max)',
-            'sum(flink_taskmanager_job_task_operator_KafkaConsumer_records_lag_max)',
-            # Current/committed offsets are often exposed as operator gauges.
-            'sum(flink_taskmanager_job_task_operator_current_offsets_cic_topic_0) - sum(flink_taskmanager_job_task_operator_committed_offsets_cic_topic_0)',
-            'sum(flink_taskmanager_job_task_operator_KafkaConsumer_current_offsets_cic_topic_0) - sum(flink_taskmanager_job_task_operator_KafkaConsumer_committed_offsets_cic_topic_0)',
+            'sum(flink_taskmanager_job_task_operator_KafkaSourceReader_KafkaConsumer_records_lag_max)',
         ])
 
     def get_recovery_time(self, effective_lag: float) -> float:
         """Estimate recovery time window while backlog exists and preserve last completed recovery."""
+        if not math.isfinite(effective_lag):
+            return self.last_recovery_time if self.last_recovery_time else 0.0
 
         now = time.time()
         if effective_lag > 0:
@@ -184,18 +246,15 @@ class MetricsCollector:
         return self.last_recovery_time
     
     def collect_metrics(self, load_rate: int) -> Dict[str, Any]:
-        """Collect all metrics at once"""
+        """Collect all metrics at once."""
         elapsed = time.time() - self.start_time if self.start_time else 0
         throughput = self.get_throughput()
         latency = self.get_latency()
         raw_lag = self.get_kafka_lag()
-        if raw_lag > 0:
-            kafka_lag = raw_lag
-        else:
-            # Keep lag non-zero and non-negative during active load when direct lag metric is absent.
-            synthetic_lag = float(max(0.0, load_rate - throughput))
-            kafka_lag = synthetic_lag if synthetic_lag > 0 else (1.0 if load_rate > 0 else 0.0)
-        recovery_time = self.get_recovery_time(kafka_lag)
+        kafka_lag = raw_lag if math.isfinite(raw_lag) and raw_lag >= 0 else math.nan
+        recovery_time = self.get_recovery_time(kafka_lag) if math.isfinite(kafka_lag) else 0.0
+        cpu = self.get_cpu_usage()
+        memory = self.get_memory_usage()
         
         metric = {
             'timestamp': datetime.now().isoformat(),
@@ -203,8 +262,8 @@ class MetricsCollector:
             'load_rate': load_rate,
             'throughput': throughput,
             'latency': latency,
-            'cpu': self.get_cpu_usage(),
-            'memory': self.get_memory_usage(),
+            'cpu': cpu,
+            'memory': memory,
             'kafka_lag': kafka_lag,
             'recovery_time': recovery_time,
         }
@@ -213,7 +272,7 @@ class MetricsCollector:
         logger.info(f"Collected metrics - Throughput: {metric['throughput']:.1f} msg/s, "
                f"Latency: {metric['latency']:.1f}ms, "
                    f"CPU: {metric['cpu']:.1f}%, "
-                   f"Memory: {metric['memory']:.1f}%, "
+                   f"Memory: {metric['memory']:.1f} MiB, "
                    f"Lag: {metric['kafka_lag']:.0f}")
         
         return metric
@@ -302,6 +361,14 @@ def main():
     args = parser.parse_args()
     
     collector = MetricsCollector(prometheus_url=args.prometheus)
+    if not collector.check_prometheus_health():
+        logger.error(
+            f"Prometheus is unreachable at {args.prometheus}. "
+            "Start the monitoring stack first (e.g. `bash scripts/run_experiment.sh spark` "
+            "or `bash scripts/run_experiment.sh flink`) before collecting metrics."
+        )
+        raise SystemExit(1)
+
     if args.load_config:
         try:
             with open(args.load_config, 'r', encoding='utf-8') as file_handle:

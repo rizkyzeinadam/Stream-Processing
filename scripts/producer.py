@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 class DynamicLoadGenerator:
     """Generate dynamic load and replay parquet rows to Kafka."""
 
-    def __init__(self, broker: str = 'kafka:29092', topic: str = 'cic-topic', config_file: Optional[str] = None):
+    def __init__(self, broker: str = 'localhost:9092', topic: str = 'cic-topic', config_file: Optional[str] = None):
         """Initialize producer and experiment configuration."""
         self.broker = broker
         self.topic = topic
@@ -44,6 +44,9 @@ class DynamicLoadGenerator:
         self.dataset_enabled = False
         self.dataset_iter: Optional[Iterator[Dict[str, Any]]] = None
         self.dataset_row_index = 0
+        self.event_delay_ms = 0
+        self.producer_id = 0
+        self.num_producers = 1
         
         # Load configuration from YAML if provided
         if config_file:
@@ -53,6 +56,9 @@ class DynamicLoadGenerator:
             self.topic = self.load_config.get('kafka_topic', topic)
         else:
             self.topic = topic
+
+        if self.load_config and 'event_delay_ms' in self.load_config:
+            self.event_delay_ms = int(self.load_config.get('event_delay_ms', self.event_delay_ms))
 
         self._load_dataset_if_configured()
         
@@ -142,16 +148,21 @@ class DynamicLoadGenerator:
         if self.dataset_iter is None:
             self.dataset_iter = self._iter_parquet_rows(self.dataset_path)
 
-        try:
-            row = next(self.dataset_iter)
-        except StopIteration:
-            # Restart iterator when reaching EOF to support long runs.
-            self.dataset_iter = self._iter_parquet_rows(self.dataset_path)
-            self.dataset_row_index = 0
-            row = next(self.dataset_iter)
+        while True:
+            try:
+                row = next(self.dataset_iter)
+            except StopIteration:
+                # Restart iterator when reaching EOF to support long runs.
+                self.dataset_iter = self._iter_parquet_rows(self.dataset_path)
+                self.dataset_row_index = 0
+                row = next(self.dataset_iter)
 
-        idx = self.dataset_row_index
-        self.dataset_row_index += 1
+            idx = self.dataset_row_index
+            self.dataset_row_index += 1
+            # Round-robin: producer k only emits rows where index % N == k.
+            if idx % self.num_producers == self.producer_id:
+                break
+
         return {
             'dataset_row_index': idx,
             'dataset_total_rows': None,
@@ -163,6 +174,7 @@ class DynamicLoadGenerator:
         elapsed = time.time() - self.start_time
         return {
             'timestamp': datetime.now().isoformat(),
+            'event_time_ms': int(time.time() * 1000),
             'elapsed_seconds': elapsed,
             'message_id': self.message_count,
             'load_pattern': pattern_name,
@@ -272,22 +284,28 @@ class DynamicLoadGenerator:
                 logger.info(f"Time {elapsed:.1f}s: Rate changed to {target_rate} msg/s")
                 last_rate = target_rate
             
-            # Calculate inter-message delay for target rate
-            interval = 1.0 / target_rate if target_rate > 0 else 1.0
+            # Calculate inter-message delay for target rate. With N producers each
+            # carrying 1/N of the load, sleep N/target_rate so aggregate == target_rate.
+            interval = self.num_producers / target_rate if target_rate > 0 else 1.0
             
             # Send message
             try:
                 event = self.create_event(target_rate, pattern or "config")
-                future = self.producer.send(self.topic, value=event)
-                future.get(timeout=10)
+                # Introduce a small per-event delay before the message is dispatched so
+                # the producer timestamp ages and end-to-end latency is non-zero.
+                if self.event_delay_ms > 0:
+                    time.sleep(self.event_delay_ms / 1000.0)
+                # Async send: do NOT block on the ack so the loop can hit the target rate.
+                self.producer.send(self.topic, value=event)
                 self.message_count += 1
 
                 if self.message_count == 1:
                     logger.info("First message sent")
                 
-                # Log every 100 messages
+                # Log every 100 messages and flush so the batch actually reaches Kafka.
                 if self.message_count % 100 == 0:
                     logger.debug(f"Sent {self.message_count} messages")
+                    self.producer.flush()
                 
             except Exception as e:
                 logger.error(f"Error sending message: {e}")
@@ -312,11 +330,24 @@ def main():
                        default='step', 
                        help='Load pattern (ignored if --config is provided)')
     parser.add_argument('--duration', type=int, default=120, help='Duration in seconds')
+    parser.add_argument('--event-delay-ms', type=int, default=None,
+                        help='Artificial per-event delay in milliseconds so latency is non-zero')
+    parser.add_argument('--producer-id', type=int, default=0,
+                        help='ID of this producer (0..num-producers-1) for round-robin dataset partitioning')
+    parser.add_argument('--num-producers', type=int, default=1,
+                        help='Total number of producer processes sharing the load')
     parser.add_argument('--repeat', type=int, default=1, help='Number of times to repeat pattern')
     
     args = parser.parse_args()
-    
+
+    if args.duration < 30 and args.config is None:
+        logger.warning("Duration < 30s may be too short for visible metric batching; consider 30-120s.")
+
     generator = DynamicLoadGenerator(broker=args.broker, topic=args.topic, config_file=args.config)
+    if args.event_delay_ms is not None:
+        generator.event_delay_ms = args.event_delay_ms
+    generator.producer_id = args.producer_id
+    generator.num_producers = args.num_producers
 
     if args.dataset:
         if not generator.load_config:

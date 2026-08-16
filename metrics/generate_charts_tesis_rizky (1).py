@@ -219,7 +219,7 @@ def fig44():
     fig, axes = plt.subplots(2, 3, figsize=(16, 8))
     fig.suptitle(
         'Figure 4.4. Kafka Lag Proxy Evolution — Flink and Spark across Three Fault Scenarios\n'
-        'Synthetic proxy: cumulative load_rate − throughput per second',
+        'Instant backlog proxy: load_rate − throughput per second (not cumulative)',
         fontsize=11)
 
     configs = [
@@ -362,7 +362,7 @@ def fig46():
         title='Figure 4.6. Master Timeline — Dynamic Load + Multi-Fault Cascading\n'
               'Throughput, Latency, Kafka Lag with fault event annotations',
         fignum=6,
-        fault_labels=['Switchover\nWorker2', 'Kill\nWorker1'],
+        fault_labels=['Switchover\nTaskManager2', 'Kill\nTaskManager1'],
         out_fname='fig46_master_timeline_multifault.png'
     )
 
@@ -373,7 +373,7 @@ def fig47():
         title='Figure 4.7. Master Timeline — Single Node Failure\n'
               'Throughput, Latency, Kafka Lag (fault t=120s, no restart)',
         fignum=7,
-        fault_labels=['Kill Worker1'],
+        fault_labels=['Kill TaskManager1'],
         out_fname='fig47_master_timeline_single.png'
     )
 
@@ -384,7 +384,7 @@ def fig48():
         title='Figure 4.8. Master Timeline — Central Component Failure\n'
               'Throughput, Latency, Kafka Lag (fault t=120s, restart t=180s)',
         fignum=8,
-        fault_labels=['Kill Master'],
+        fault_labels=['Kill JobManager'],
         out_fname='fig48_master_timeline_central.png'
     )
 
@@ -446,8 +446,8 @@ def fig410():
 
     ax.set_xticks(x); ax.set_xticklabels(scenarios, fontsize=10)
     ax.set_ylabel('Throughput Deficit (%)')
-    ax.set_title('Figure 4.10. Estimated Data Loss — Numerical Integral Reconciliation\n'
-                 'max(0, sum(load_rate*dt) − sum(throughput*dt)) / sum(load_rate*dt) × 100%', fontsize=11)
+    ax.set_title('Figure 4.10. Throughput Deficit — Numerical Integral Reconciliation\n'
+                 '1 − (sum(throughput*dt) / sum(load_rate*dt)) × 100%', fontsize=11)
     ax.legend(fontsize=10)
     ax.set_ylim(0, 105)
     ax.axhline(100, color='red', ls='--', lw=0.8, alpha=0.4)
@@ -519,7 +519,7 @@ if __name__ == '__main__':
         ('Figure 4.7  — Master Timeline Single Node',      fig47),
         ('Figure 4.8  — Master Timeline Central Comp',     fig48),
         ('Figure 4.9  — Stabilization Interval Bar',       fig49),
-        ('Figure 4.10 — Data Loss Bar',                    fig410),
+        ('Figure 4.10 — Throughput Deficit Bar',            fig410),
         ('Figure 4.11 — Summary Comparison',               fig411),
     ]
 

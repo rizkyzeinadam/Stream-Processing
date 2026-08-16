@@ -1,4 +1,4 @@
-yamlcascading_faults:
+cascading_faults:
   - time: 0
     action: "clear_faults"
     description: "Start with clean state"

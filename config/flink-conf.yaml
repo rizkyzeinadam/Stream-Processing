@@ -3,7 +3,7 @@ jobmanager.rpc.port: 6123
 taskmanager.rpc.port: 6124
 taskmanager.numberOfTaskSlots: 1
 parallelism.default: 2
-jobmanager.scheduler: adaptive
+jobmanager.scheduler: declarative        # ← BERUBAH: dari "adaptive" ke "declarative" (non-adaptive)
 cluster.evenly-spread-out-slots: true
 
 # Memory configuration
@@ -24,7 +24,7 @@ execution.checkpointing.timeout: 600000
 execution.checkpointing.max-concurrent-checkpoints: 1
 taskmanager.state.local.recovery: true
 restart-strategy: fixed-delay
-restart-strategy.fixed-delay.attempts: 10
+restart-strategy.fixed-delay.attempts: 1000   # ← BERUBAH: dari 10 ke 1000 (biar job nggak FAILED pas nunggu TM1 balik)
 restart-strategy.fixed-delay.delay: 5 s
 
 # Network

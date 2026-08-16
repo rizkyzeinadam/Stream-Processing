@@ -55,6 +55,52 @@ def read_fault_start(default: float = 300.0) -> float:
     return default
 
 
+def compute_recovery_interval(df: pd.DataFrame) -> float:
+    """Unified recovery definition used across reports.
+
+    T1: throughput drops below 50% of the baseline.
+    T2: throughput is at least 90% of the baseline for 5 consecutive samples.
+    """
+    if "throughput" not in df.columns or df.empty:
+        return 0.0
+
+    tp = pd.to_numeric(df["throughput"], errors="coerce").replace(0, pd.NA)
+    baseline = float(tp.dropna().head(10).mean()) if tp.dropna().size else 0.0
+    if not pd.notna(baseline) or baseline <= 0:
+        return 0.0
+
+    t1_candidates = tp.index[tp < 0.5 * baseline].tolist()
+    if not t1_candidates:
+        return 0.0
+
+    t1_idx = t1_candidates[0]
+    for idx in range(t1_idx, max(0, len(df) - 4)):
+        window = tp.iloc[idx:idx + 5]
+        if window.size < 5:
+            break
+        if (window >= 0.9 * baseline).all():
+            t2_idx = idx + 4
+            t1_time = float(df.iloc[t1_idx]["elapsed_seconds"])
+            t2_time = float(df.iloc[t2_idx]["elapsed_seconds"])
+            duration = t2_time - t1_time
+            if duration >= 0:
+                return duration
+    return 0.0
+
+
+def compute_throughput_deficit(df: pd.DataFrame) -> float:
+    """Throughput deficit = 1 - total_out / total_in."""
+    if "dt" not in df.columns:
+        df = df.copy()
+        df["dt"] = df["elapsed_seconds"].diff().fillna(1.0)
+
+    total_in = float((df["load_rate"] * df["dt"]).sum()) if "load_rate" in df.columns else 0.0
+    total_out = float((df["throughput"] * df["dt"]).sum()) if "throughput" in df.columns else 0.0
+    if total_in <= 0:
+        return 0.0
+    return max(0.0, 1.0 - (total_out / total_in))
+
+
 def compute_metrics(df: pd.DataFrame) -> Dict[str, Dict[str, float]]:
     df_lat = df[df["latency"] > 0] if "latency" in df.columns else df
     if df_lat.empty:
@@ -67,39 +113,8 @@ def compute_metrics(df: pd.DataFrame) -> Dict[str, Dict[str, float]]:
     lag_max = float(df["kafka_lag"].max()) if "kafka_lag" in df.columns else 0.0
     cpu_avg = float(df["cpu"].mean()) if "cpu" in df.columns else 0.0
     mem_avg = float(df["memory"].mean()) if "memory" in df.columns else 0.0
-
-    injected_fault_time = read_fault_start()
-    baseline_lat = float(df["latency"].head(10).mean()) if "latency" in df.columns else 0.0
-    baseline_lag = float(df["kafka_lag"].head(10).mean()) if "kafka_lag" in df.columns else 0.0
-    threshold_lat = baseline_lat * 1.5
-    threshold_lag = max(baseline_lag * 2, 50)
-
-    fault_start_idx = None
-    fault_end_idx = None
-
-    for i, row in df.iterrows():
-        if row.get("elapsed_seconds", -1) >= injected_fault_time:
-            fault_start_idx = i
-            break
-
-    for i, row in df.iterrows():
-        if fault_start_idx is None and (
-            row.get("latency", 0) > threshold_lat or row.get("kafka_lag", 0) > threshold_lag
-        ):
-            fault_start_idx = i
-
-        if fault_start_idx is not None and i > fault_start_idx:
-            if row.get("latency", 0) < threshold_lat and row.get("kafka_lag", 0) < threshold_lag:
-                fault_end_idx = i
-                break
-
-    recovery_duration = 0.0
-    if fault_start_idx is not None and fault_end_idx is not None:
-        t_start = float(df.loc[fault_start_idx, "elapsed_seconds"])
-        t_end = float(df.loc[fault_end_idx, "elapsed_seconds"])
-        duration = t_end - t_start
-        if 0 < duration < float(df["elapsed_seconds"].max()) * 0.9:
-            recovery_duration = duration
+    recovery_duration = compute_recovery_interval(df)
+    throughput_deficit = compute_throughput_deficit(df) * 100
 
     if "dt" not in df.columns:
         df = df.copy()
@@ -147,7 +162,7 @@ def compute_metrics(df: pd.DataFrame) -> Dict[str, Dict[str, float]]:
             "correctness_assessment": correctness,
         },
         "DataLoss": {
-            "loss_percentage": loss_pct,
+            "loss_percentage": max(loss_pct, throughput_deficit),
             "total_input_events": int(round(total_in)),
             "total_output_events": int(round(total_out)),
             "missing_events": int(round(data_loss)),

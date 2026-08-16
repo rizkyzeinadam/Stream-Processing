@@ -1,19 +1,19 @@
 load_pattern:
   - rate: 100
-    duration: 180
-    description: "Baseline load"
-  - rate: 300
-    duration: 180
-    description: "Increasing load"
-  - rate: 700
-    duration: 180
-    description: "High load"
-  - rate: 1000
-    duration: 60
-    description: "Burst load peak"
+    duration: 100
+    description: "Warm-up (baseline stable)"
   - rate: 200
-    duration: 300
-    description: "Recovery phase"
+    duration: 200
+    description: "Ramp-up"
+  - rate: 300
+    duration: 30
+    description: "Switchover (fault t=300)"
+  - rate: 700
+    duration: 330
+    description: "Kill + High (fault t=330)"
+  - rate: 1000
+    duration: 240
+    description: "Restart + Peak (fault t=660)"
 
 total_duration: 900
 replay_dataset: true

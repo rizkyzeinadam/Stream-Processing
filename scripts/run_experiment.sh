@@ -21,7 +21,10 @@ METRICS_DURATION="${METRICS_DURATION:-895}"
 SERVICE_TIMEOUT_SECONDS="${SERVICE_TIMEOUT_SECONDS:-150}"
 KAFKA_TOPIC="${KAFKA_TOPIC:-cic-topic}"
 PRODUCER_READY_TIMEOUT_SECONDS="${PRODUCER_READY_TIMEOUT_SECONDS:-300}"
+NUM_PRODUCERS="${NUM_PRODUCERS:-10}"
 FLINK_MODE="${FLINK_MODE:-B}"
+FLINK_GRAFANA_PORT="${FLINK_GRAFANA_PORT:-3001}"
+SPARK_GRAFANA_PORT="${SPARK_GRAFANA_PORT:-3002}"
 LOCK_DIR="/tmp/flink_spark_experiment.lock"
 
 acquire_lock() {
@@ -96,6 +99,24 @@ wait_for_http_service() {
     return 1
 }
 
+wait_for_spark_streaming_query_active() {
+    local timeout="${1:-180}"
+    local elapsed=0
+
+    log "Waiting for Spark Structured Streaming query to become ACTIVE (timeout ${timeout}s)..."
+    while [ "$elapsed" -lt "$timeout" ]; do
+        if curl -fsS "http://localhost:4040/StreamingQuery/" 2>/dev/null | grep -Eqi "active|running|status"; then
+            success "Spark Structured Streaming query is ACTIVE"
+            return 0
+        fi
+        sleep 5
+        elapsed=$((elapsed + 5))
+    done
+
+    error "Spark Structured Streaming query did not become ACTIVE within ${timeout}s"
+    return 1
+}
+
 wait_for_kafka_service() {
     local container_name="$1"
     local timeout="$2"
@@ -157,7 +178,7 @@ warmup_or_wait() {
 ensure_flink_stack_ready() {
     wait_for_http_service "Flink JobManager" "http://localhost:8083/v1/overview" "$SERVICE_TIMEOUT_SECONDS"
     wait_for_http_service "Prometheus" "http://localhost:9090/-/healthy" "$SERVICE_TIMEOUT_SECONDS"
-    wait_for_http_service "Grafana" "http://localhost:3000/api/health" "$SERVICE_TIMEOUT_SECONDS"
+    wait_for_http_service "Grafana" "http://localhost:${FLINK_GRAFANA_PORT}/api/health" "$SERVICE_TIMEOUT_SECONDS"
     wait_for_kafka_service "flink-kafka" "$SERVICE_TIMEOUT_SECONDS"
     wait_for_kafka_host_listener "$SERVICE_TIMEOUT_SECONDS"
 }
@@ -165,7 +186,7 @@ ensure_flink_stack_ready() {
 ensure_spark_stack_ready() {
     wait_for_http_service "Spark Master UI" "http://localhost:8080" "$SERVICE_TIMEOUT_SECONDS"
     wait_for_http_service "Prometheus" "http://localhost:9090/-/healthy" "$SERVICE_TIMEOUT_SECONDS"
-    wait_for_http_service "Grafana" "http://localhost:3000/api/health" "$SERVICE_TIMEOUT_SECONDS"
+    wait_for_http_service "Grafana" "http://localhost:${SPARK_GRAFANA_PORT}/api/health" "$SERVICE_TIMEOUT_SECONDS"
     wait_for_kafka_service "spark-kafka" "$SERVICE_TIMEOUT_SECONDS"
 }
 
@@ -206,38 +227,61 @@ deploy_spark_streaming_job() {
     fi
 
     docker cp "$SPARK_JOB_JAR" spark-driver:/tmp/cic-spark-job.jar
-    docker exec spark-driver bash -lc "mkdir -p /tmp/spark-checkpoints /tmp/spark-query-checkpoints /tmp/spark-metrics-checkpoints /tmp/spark-local /tmp/.ivy2/cache /tmp/.ivy2/jars"
-    docker exec spark-driver bash -lc "nohup env HOME=/tmp IVY_HOME=/tmp/.ivy2 /opt/spark/bin/spark-submit --master spark://spark-master:7077 --deploy-mode client --conf spark.jars.ivy=/tmp/.ivy2 --class thesis.stream.CicSparkStreamingJob --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.0 /tmp/cic-spark-job.jar kafka:29092 ${KAFKA_TOPIC} spark-group > /tmp/cic-spark-job.log 2>&1 & echo \$! > /tmp/cic-spark-job.pid"
+    rm -rf "$DOCKER_COMPOSE_DIR/spark-checkpoints" 2>/dev/null || true
+    docker exec --user root spark-driver bash -lc "rm -rf /tmp/spark-checkpoints /tmp/spark-query-checkpoints /tmp/spark-metrics-checkpoints /tmp/spark-local 2>/dev/null || true; mkdir -p /tmp/spark-checkpoints /tmp/spark-query-checkpoints /tmp/spark-metrics-checkpoints /tmp/spark-local /tmp/.ivy2/cache /tmp/.ivy2/jars /tmp/spark-query-checkpoints/data; chmod -R 777 /tmp/spark-checkpoints /tmp/spark-query-checkpoints /tmp/spark-metrics-checkpoints /tmp/spark-local /tmp/.ivy2 2>/dev/null || true; chown -R 185:0 /tmp/spark-checkpoints /tmp/spark-query-checkpoints /tmp/spark-metrics-checkpoints /tmp/spark-local /tmp/.ivy2 2>/dev/null || true"
 
-    sleep 5
-    if ! docker exec spark-driver bash -lc "kill -0 \$(cat /tmp/cic-spark-job.pid)" >/dev/null 2>&1; then
-        error "Spark streaming job failed to start. Check spark-driver:/tmp/cic-spark-job.log"
-        exit 1
-    fi
+    # Kill any stale Spark streaming job from a previous run so port 9091 is free.
+    log "Clearing stale Spark streaming job processes (not the Master)..."
+    docker exec spark-driver bash -lc "pkill -9 -f CicSparkStreamingJob 2>/dev/null || true; pkill -9 -f SparkSubmit 2>/dev/null || true; sleep 3" || true
 
-    log "Waiting for Spark job to initialize and download dependencies (this may take up to 2 minutes)..."
-    local elapsed=0
-    local timeout=180
-    while [ "$elapsed" -lt "$timeout" ]; do
-        if docker exec spark-driver curl -s http://localhost:9091/metrics >/dev/null 2>&1; then
-            success "Spark job HTTP initialized. Waiting another 15s for Spark DAG and MicroBatch compiler to connect to Kafka..."
-            sleep 15
-            break
+    local attempt=1
+    local max_attempts=3
+    while [ "$attempt" -le "$max_attempts" ]; do
+        log "Submitting Spark streaming job (attempt ${attempt}/${max_attempts})..."
+        docker exec spark-driver bash -lc "rm -f /tmp/cic-spark-job.log /tmp/cic-spark-job.pid && rm -rf /tmp/.ivy2/cache/org.apache.hadoop/hadoop-client-runtime /tmp/.ivy2/jars/hadoop-client-runtime* 2>/dev/null || true && nohup env HOME=/tmp IVY_HOME=/tmp/.ivy2 /opt/spark/bin/spark-submit --master spark://spark-master:7077 --deploy-mode client --conf spark.jars.ivy=/tmp/.ivy2 --conf spark.executor.memory=700m --repositories https://repo.maven.apache.org/maven2 --class thesis.stream.CicSparkStreamingJob --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.0 /tmp/cic-spark-job.jar spark-kafka:29092 ${KAFKA_TOPIC} spark-group > /tmp/cic-spark-job.log 2>&1 & echo \$! > /tmp/cic-spark-job.pid"
+
+        sleep 10
+        if docker exec spark-driver bash -lc "kill -0 \$(cat /tmp/cic-spark-job.pid 2>/dev/null || echo 0)" >/dev/null 2>&1; then
+            log "Waiting for Spark job to initialize and download dependencies (this may take up to 2 minutes)..."
+            local elapsed=0
+            local timeout=180
+            while [ "$elapsed" -lt "$timeout" ]; do
+                if docker exec spark-driver curl -s http://localhost:9091/metrics >/dev/null 2>&1; then
+                    if docker exec spark-driver curl -fsS "http://localhost:4040/StreamingQuery/" 2>/dev/null | grep -Eqi "active|running|status"; then
+                        success "Spark job HTTP initialized and Structured Streaming query is ACTIVE. Waiting another 15s for Kafka wiring to settle..."
+                        sleep 15
+                        success "Spark streaming job deployed (cic-topic, group spark-group)"
+                        return 0
+                    fi
+                fi
+                if ! docker exec spark-driver bash -lc "kill -0 \$(cat /tmp/cic-spark-job.pid 2>/dev/null || echo 0)" >/dev/null 2>&1; then
+                    break
+                fi
+                sleep 5
+                elapsed=$((elapsed + 5))
+            done
         fi
-        if ! docker exec spark-driver bash -lc "kill -0 \$(cat /tmp/cic-spark-job.pid)" >/dev/null 2>&1; then
+
+        if docker exec spark-driver bash -lc "grep -q 'download failed: org.apache.hadoop#hadoop-client-runtime' /tmp/cic-spark-job.log 2>/dev/null || grep -q 'hadoop-client-runtime' /tmp/cic-spark-job.log 2>/dev/null"; then
+            warning "Dependency download failed during Spark startup; retrying after clearing Ivy cache (attempt ${attempt}/${max_attempts})..."
+            attempt=$((attempt + 1))
+            continue
+        fi
+
+        if docker exec spark-driver bash -lc "grep -q 'Exception in thread \"main\"' /tmp/cic-spark-job.log 2>/dev/null"; then
             error "Spark streaming job JVM crashed. Check spark-driver:/tmp/cic-spark-job.log"
             exit 1
         fi
-        sleep 5
-        elapsed=$((elapsed + 5))
-    done
 
-    if [ "$elapsed" -ge "$timeout" ]; then
-        error "Spark job failed to initialize within ${timeout}s"
+        if [ "$attempt" -lt "$max_attempts" ]; then
+            warning "Spark job did not become ready; retrying submission (attempt ${attempt}/${max_attempts})..."
+            attempt=$((attempt + 1))
+            continue
+        fi
+
+        error "Spark job failed to initialize within ${timeout}s after ${max_attempts} attempts"
         exit 1
-    fi
-
-    success "Spark streaming job deployed (cic-topic, group spark-group)"
+    done
 }
 
 wait_for_producer_ready() {
@@ -264,6 +308,45 @@ wait_for_producer_ready() {
 
     error "Producer did not become ready within ${timeout}s. Check log: $log_file"
     return 1
+}
+
+start_load_producers() {
+    local system="$1"
+    local single_log="$2"
+    pkill -9 -f "producer.py" 2>/dev/null || true
+    sleep 2
+    rm -f /tmp/producer_*.log /tmp/producer.log
+
+    if [ "$NUM_PRODUCERS" -gt 1 ]; then
+        log "Starting $NUM_PRODUCERS synchronized producers (round-robin partition, aggregate = target rate)..."
+        cd "$SCRIPTS_DIR"
+        BROKER="127.0.0.1:9092" \
+        TOPIC="$KAFKA_TOPIC" \
+        NUM_PRODUCERS="$NUM_PRODUCERS" \
+        CONFIG="$CONFIG_DIR/load.yaml" \
+        LOG_DIR="/tmp" \
+        KAFKA_CONTAINER="${system}-kafka" \
+        bash "$SCRIPTS_DIR/run_producers.sh" > "/tmp/${system}_producers_launcher.log" 2>&1 &
+        PRODUCER_PID=$!
+        wait_for_producer_ready "/tmp/producer_0.log" "$PRODUCER_PID"
+        sleep 3
+        actual=$(pgrep -af producer.py | wc -l | tr -d ' ')
+        if [ "$actual" != "$NUM_PRODUCERS" ]; then
+            error "Expected $NUM_PRODUCERS producers, found $actual. Aborting."
+            exit 1
+        fi
+        success "Verified $actual producers running"
+    else
+        log "Starting single producer with dynamic load pattern (from config)..."
+        cd "$SCRIPTS_DIR"
+        python3 producer.py \
+            --broker "127.0.0.1:9092" \
+            --topic "$KAFKA_TOPIC" \
+            --config "$CONFIG_DIR/load.yaml" \
+            > "$single_log" 2>&1 &
+        PRODUCER_PID=$!
+        wait_for_producer_ready "$single_log" "$PRODUCER_PID"
+    fi
 }
 
 # Verify environment
@@ -361,8 +444,9 @@ setup_configs() {
 stop_all() {
     log "Stopping all containers..."
     cd "$DOCKER_COMPOSE_DIR"
-    docker-compose -f docker-compose-flink.yml down -v 2>/dev/null || true
-    docker-compose -f docker-compose-spark.yml down -v 2>/dev/null || true
+    docker-compose -f docker-compose-flink.yml down --remove-orphans 2>/dev/null || true
+    docker-compose -f docker-compose-spark.yml down --remove-orphans 2>/dev/null || true
+    rm -rf "$DOCKER_COMPOSE_DIR/spark-checkpoints" 2>/dev/null || true
     sleep 5
     success "All containers stopped"
 }
@@ -394,18 +478,8 @@ run_flink_experiment() {
     log "  Expected Duration: ~${EXPERIMENT_DURATION} seconds"
     log "  Dataset: $DATASET_PATH"
     
-    # Start producer first so warmup traffic exists before metrics begin
-    log "Starting producer with dynamic load pattern (from config)..."
-    cd "$SCRIPTS_DIR"
-    python3 producer.py \
-        --broker "localhost:9092" \
-        --topic "$KAFKA_TOPIC" \
-        --config "$CONFIG_DIR/load.yaml" \
-        > /tmp/flink_producer.log 2>&1 &
-    PRODUCER_PID=$!
-    log "Producer started"
-
-    wait_for_producer_ready "/tmp/flink_producer.log" "$PRODUCER_PID"
+    # Start producer(s) first so warmup traffic exists before metrics begin.
+    start_load_producers "flink" "/tmp/flink_producer.log"
 
     log "Waiting ${WARMUP_SECONDS}s warmup before metrics collection..."
     sleep "$WARMUP_SECONDS"
@@ -449,7 +523,7 @@ run_spark_experiment() {
     # Stop Flink
     log "Stopping Flink containers..."
     cd "$DOCKER_COMPOSE_DIR"
-    docker-compose -f docker-compose-flink.yml down -v
+    docker-compose -f docker-compose-flink.yml down --remove-orphans
     sleep 15
     
     # Start Spark
@@ -471,18 +545,8 @@ run_spark_experiment() {
     log "  Expected Duration: ~${EXPERIMENT_DURATION} seconds"
     log "  Dataset: $DATASET_PATH"
     
-    # Start producer first so warmup traffic exists before metrics begin
-    log "Starting producer with SAME dynamic load pattern..."
-    cd "$SCRIPTS_DIR"
-    python3 producer.py \
-        --broker "localhost:9092" \
-        --topic "$KAFKA_TOPIC" \
-        --config "$CONFIG_DIR/load.yaml" \
-        > /tmp/spark_producer.log 2>&1 &
-    PRODUCER_PID=$!
-    log "Producer started"
-
-    wait_for_producer_ready "/tmp/spark_producer.log" "$PRODUCER_PID"
+    # Start producer(s) first so warmup traffic exists before metrics begin.
+    start_load_producers "spark" "/tmp/spark_producer.log"
 
     log "Waiting ${WARMUP_SECONDS}s warmup before metrics collection..."
     sleep "$WARMUP_SECONDS"
@@ -546,15 +610,7 @@ run_fault_scenario() {
     log "Scenario output CSV: $output_csv"
     log "Scenario fault config: $fault_config"
 
-    cd "$SCRIPTS_DIR"
-    python3 producer.py \
-        --broker "localhost:9092" \
-        --topic "$KAFKA_TOPIC" \
-        --config "$CONFIG_DIR/load.yaml" \
-        > "/tmp/${system}_fault_producer.log" 2>&1 &
-    PRODUCER_PID=$!
-
-    wait_for_producer_ready "/tmp/${system}_fault_producer.log" "$PRODUCER_PID"
+    start_load_producers "$system" "/tmp/${system}_fault_producer.log"
     sleep "$WARMUP_SECONDS"
 
     python3 "$SCRIPTS_DIR/metrics_collector.py" \
@@ -651,8 +707,8 @@ cleanup() {
 
     log "Cleaning up..."
     cd "$DOCKER_COMPOSE_DIR"
-    docker-compose -f docker-compose-flink.yml down -v 2>/dev/null || true
-    docker-compose -f docker-compose-spark.yml down -v 2>/dev/null || true
+    docker-compose -f docker-compose-flink.yml down --remove-orphans 2>/dev/null || true
+    docker-compose -f docker-compose-spark.yml down --remove-orphans 2>/dev/null || true
     success "Cleanup complete"
 }
 

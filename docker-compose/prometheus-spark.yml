@@ -1,24 +1,28 @@
 global:
-  scrape_interval: 15s
+  scrape_interval: 5s
 
 scrape_configs:
   - job_name: 'spark-master'
+    scrape_interval: 5s
     static_configs:
       - targets: ['spark-master:8080']
     metrics_path: '/metrics/prometheus'
 
   - job_name: 'spark-worker1'
+    scrape_interval: 5s
     static_configs:
       - targets: ['spark-worker1:8081']
     metrics_path: '/metrics/prometheus'
 
   - job_name: 'spark-worker2'
+    scrape_interval: 5s
     static_configs:
       - targets: ['spark-worker2:8081']
     metrics_path: '/metrics/prometheus'
 
   - job_name: 'spark-app'
     fallback_scrape_protocol: PrometheusText0.0.4
+    scrape_interval: 5s
     static_configs:
       - targets: ['spark-master:9091']
     metrics_path: '/metrics'

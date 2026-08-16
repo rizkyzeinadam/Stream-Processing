@@ -88,7 +88,7 @@ services:
   grafana:
     image: grafana/grafana:latest
     ports:
-      - "3000:3000"
+      - "3002:3000"
     environment:
       GF_SECURITY_ADMIN_PASSWORD: admin
       GF_SECURITY_ADMIN_USER: admin
@@ -128,7 +128,7 @@ services:
       - '--disable_metrics=disk,network,tcp,udp,percpu,sched,process'
 
   spark-master:
-    image: apache/spark:v3.4.0
+    image: apache/spark-py:v3.4.0
     container_name: spark-driver
     hostname: spark-master
     command:
@@ -152,15 +152,15 @@ services:
       - SPARK_DAEMON_JAVA_OPTS=-Dspark.ui.prometheus.enabled=true
     networks:
       - spark-network
-    mem_limit: 512m
+    mem_limit: 2g
     volumes:
       - ./spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
       - ./metrics.properties:/opt/spark/conf/metrics.properties:ro
-      - ./spark-checkpoints:/tmp/spark-checkpoints
-      - ./spark-checkpoints:/tmp/spark-query-checkpoints
+      - spark-checkpoints:/tmp/spark-checkpoints
+      - spark-checkpoints:/tmp/spark-query-checkpoints
 
   spark-worker1:
-    image: apache/spark:v3.4.0
+    image: apache/spark-py:v3.4.0
     container_name: spark-worker1
     command:
       - /opt/spark/bin/spark-class
@@ -174,7 +174,7 @@ services:
       - spark://spark-master:7077
     environment:
       - SPARK_WORKER_MEMORY=1200m
-      - SPARK_WORKER_CORES=1
+      - SPARK_WORKER_CORES=2
       - SPARK_LOCAL_DIRS=/tmp/spark-local
       - PYSPARK_PYTHON=python3
       - SPARK_DAEMON_JAVA_OPTS=-Dspark.ui.prometheus.enabled=true
@@ -191,11 +191,11 @@ services:
     volumes:
       - ./spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
       - ./metrics.properties:/opt/spark/conf/metrics.properties:ro
-      - ./spark-checkpoints:/tmp/spark-checkpoints
-      - ./spark-checkpoints:/tmp/spark-query-checkpoints
+      - spark-checkpoints:/tmp/spark-checkpoints
+      - spark-checkpoints:/tmp/spark-query-checkpoints
 
   spark-worker2:
-    image: apache/spark:v3.4.0
+    image: apache/spark-py:v3.4.0
     container_name: spark-worker2
     command:
       - /opt/spark/bin/spark-class
@@ -209,7 +209,7 @@ services:
       - spark://spark-master:7077
     environment:
       - SPARK_WORKER_MEMORY=1200m
-      - SPARK_WORKER_CORES=1
+      - SPARK_WORKER_CORES=2
       - SPARK_LOCAL_DIRS=/tmp/spark-local
       - PYSPARK_PYTHON=python3
       - SPARK_DAEMON_JAVA_OPTS=-Dspark.ui.prometheus.enabled=true
@@ -226,8 +226,8 @@ services:
     volumes:
       - ./spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
       - ./metrics.properties:/opt/spark/conf/metrics.properties:ro
-      - ./spark-checkpoints:/tmp/spark-checkpoints
-      - ./spark-checkpoints:/tmp/spark-query-checkpoints
+      - spark-checkpoints:/tmp/spark-checkpoints
+      - spark-checkpoints:/tmp/spark-query-checkpoints
 
 networks:
   spark-network:
@@ -236,3 +236,4 @@ networks:
 volumes:
   prometheus-spark-data:
   grafana-spark-data:
+  spark-checkpoints:

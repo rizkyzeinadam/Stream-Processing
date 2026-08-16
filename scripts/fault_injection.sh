@@ -310,8 +310,8 @@ run_faults_from_yaml() {
     ' "$FAULT_CONFIG" | while IFS='|' read -r fault_time fault_action fault_target fault_delay fault_loss fault_source; do
         [ -z "$fault_time" ] && continue
 
-        local now_elapsed=$(($(date +%s) - start_time))
-        local wait_time=$((fault_time - now_elapsed))
+        now_elapsed=$(($(date +%s) - start_time))
+        wait_time=$((fault_time - now_elapsed))
         if [ $wait_time -gt 0 ]; then
             log "Waiting $wait_time seconds until t=$fault_time"
             sleep $wait_time

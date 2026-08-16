@@ -1,0 +1,131 @@
+{
+  "timestamp": "2026-08-15T22:37:38.344240",
+  "analysis": {
+    "Flink": {
+      "Throughput": {
+        "average": 295.65960110061053,
+        "peak": 800.775937924966
+      },
+      "Latency": {
+        "average": 326.3928006329114,
+        "peak": 368.875
+      },
+      "Backpressure": {
+        "max_lag": NaN
+      },
+      "Resource": {
+        "cpu_avg": 3.322290564306507,
+        "mem_avg": 451.8404831063035
+      },
+      "Recovery": {
+        "recovery_duration": 15.560826063156128
+      },
+      "Correctness": {
+        "duplicates": 0,
+        "duplicate_percentage": 0.0,
+        "duplicate_source": "None",
+        "correctness_assessment": "Input/output balance indicates no measurable permanent loss or replay surplus."
+      },
+      "DataLoss": {
+        "loss_percentage": 16.886239225582067,
+        "total_input_events": 317305,
+        "total_output_events": 263724,
+        "missing_events": 0
+      }
+    },
+    "Spark": {
+      "Throughput": {
+        "average": 140.38565629228688,
+        "peak": 696.0
+      },
+      "Latency": {
+        "average": 320.24101358665706,
+        "peak": 2011.5
+      },
+      "Backpressure": {
+        "max_lag": 1333.0
+      },
+      "Resource": {
+        "cpu_avg": 55.275934954363365,
+        "mem_avg": 803.9297174532027
+      },
+      "Recovery": {
+        "recovery_duration": 114.67369222640991
+      },
+      "Correctness": {
+        "duplicates": 0,
+        "duplicate_percentage": 0.0,
+        "duplicate_source": "None",
+        "correctness_assessment": "Data loss detected after backlog stabilization."
+      },
+      "DataLoss": {
+        "loss_percentage": 59.73327965018647,
+        "total_input_events": 317199,
+        "total_output_events": 127726,
+        "missing_events": 189473
+      }
+    }
+  },
+  "comparison": [
+    {
+      "Metric": "Throughput (Avg)",
+      "Flink": 295.66,
+      "Spark": 140.39,
+      "Better": "Flink"
+    },
+    {
+      "Metric": "Throughput (Peak)",
+      "Flink": 800.78,
+      "Spark": 696.0,
+      "Better": "Flink"
+    },
+    {
+      "Metric": "Latency (Avg)",
+      "Flink": 326.39,
+      "Spark": 320.24,
+      "Better": "Spark"
+    },
+    {
+      "Metric": "Latency (Peak)",
+      "Flink": 368.88,
+      "Spark": 2011.5,
+      "Better": "Flink"
+    },
+    {
+      "Metric": "Kafka Lag (Max)",
+      "Flink": NaN,
+      "Spark": 1333.0,
+      "Better": "Spark"
+    },
+    {
+      "Metric": "CPU Usage (Avg)",
+      "Flink": 3.32,
+      "Spark": 55.28,
+      "Better": "Flink"
+    },
+    {
+      "Metric": "Memory Usage (Avg)",
+      "Flink": 451.84,
+      "Spark": 803.93,
+      "Better": "Flink"
+    },
+    {
+      "Metric": "Stabilization Interval (s)",
+      "Flink": 15.56,
+      "Spark": 114.67,
+      "Better": "Flink"
+    },
+    {
+      "Metric": "Data Loss (%)",
+      "Flink": 16.89,
+      "Spark": 59.73,
+      "Better": "Flink"
+    },
+    {
+      "Metric": "Duplicate Events (%)",
+      "Flink": 0.0,
+      "Spark": 0.0,
+      "Better": "Tie"
+    }
+  ]
+}
