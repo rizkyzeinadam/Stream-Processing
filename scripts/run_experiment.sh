@@ -6,7 +6,7 @@
 
 set -e
 
-PROJECT_ROOT="/Users/rizkyzeinadam/Documents/Percobaan Tesis"
+PROJECT_ROOT="/mnt/c/Users/Rizky Zein Adam/Documents/tesis/Thesis"
 DOCKER_COMPOSE_DIR="${PROJECT_ROOT}/docker-compose"
 SCRIPTS_DIR="${PROJECT_ROOT}/scripts"
 METRICS_DIR="${PROJECT_ROOT}/metrics"
@@ -137,12 +137,13 @@ wait_for_kafka_service() {
 }
 
 wait_for_kafka_host_listener() {
-    local timeout="$1"
+    local container_name="$1"
+    local timeout="$2"
     local elapsed=0
 
-    log "Waiting for Kafka host listener at localhost:9092 (timeout ${timeout}s)..."
+    log "Waiting for Kafka host listener at localhost:9092 in $container_name (timeout ${timeout}s)..."
     while [ "$elapsed" -lt "$timeout" ]; do
-        if docker exec flink-kafka /usr/bin/kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null 2>&1; then
+        if docker exec "$container_name" /usr/bin/kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null 2>&1; then
             success "Kafka host listener is ready at localhost:9092"
             return 0
         fi
@@ -153,6 +154,7 @@ wait_for_kafka_host_listener() {
     error "Kafka host listener did not become ready within ${timeout}s"
     return 1
 }
+
 
 create_kafka_topic() {
     local kafka_container="$1"
@@ -180,7 +182,7 @@ ensure_flink_stack_ready() {
     wait_for_http_service "Prometheus" "http://localhost:9090/-/healthy" "$SERVICE_TIMEOUT_SECONDS"
     wait_for_http_service "Grafana" "http://localhost:${FLINK_GRAFANA_PORT}/api/health" "$SERVICE_TIMEOUT_SECONDS"
     wait_for_kafka_service "flink-kafka" "$SERVICE_TIMEOUT_SECONDS"
-    wait_for_kafka_host_listener "$SERVICE_TIMEOUT_SECONDS"
+    wait_for_kafka_host_listener "flink-kafka" "$SERVICE_TIMEOUT_SECONDS"
 }
 
 ensure_spark_stack_ready() {
@@ -188,7 +190,9 @@ ensure_spark_stack_ready() {
     wait_for_http_service "Prometheus" "http://localhost:9090/-/healthy" "$SERVICE_TIMEOUT_SECONDS"
     wait_for_http_service "Grafana" "http://localhost:${SPARK_GRAFANA_PORT}/api/health" "$SERVICE_TIMEOUT_SECONDS"
     wait_for_kafka_service "spark-kafka" "$SERVICE_TIMEOUT_SECONDS"
+    wait_for_kafka_host_listener "spark-kafka" "$SERVICE_TIMEOUT_SECONDS"
 }
+
 
 build_flink_job_jar() {
     log "Building Flink streaming job jar..."
@@ -285,30 +289,25 @@ deploy_spark_streaming_job() {
 }
 
 wait_for_producer_ready() {
-    local log_file="$1"
-    local producer_pid="$2"
-    local timeout="${3:-$PRODUCER_READY_TIMEOUT_SECONDS}"
+    local timeout="${1:-120}"
     local elapsed=0
 
-    log "Waiting for producer readiness marker in $log_file (timeout ${timeout}s)..."
+    log "Waiting for $NUM_PRODUCERS producer process(es) to be alive (timeout ${timeout}s)..."
     while [ "$elapsed" -lt "$timeout" ]; do
-        if [ -f "$log_file" ] && grep -q "First message sent" "$log_file"; then
-            success "Producer is active (first message has been sent)"
-            return 0
-        fi
-
-        if ! kill -0 "$producer_pid" 2>/dev/null; then
-            error "Producer exited before becoming ready. Check log: $log_file"
-            return 1
-        fi
-
-        sleep 1
-        elapsed=$((elapsed + 1))
+        actual=$(pgrep -af producer.py | wc -l | tr -d ' ')
+        [ "$actual" = "$NUM_PRODUCERS" ] && break
+        sleep 2
+        elapsed=$((elapsed + 2))
     done
 
-    error "Producer did not become ready within ${timeout}s. Check log: $log_file"
-    return 1
+    actual=$(pgrep -af producer.py | wc -l | tr -d ' ')
+    if [ "$actual" != "$NUM_PRODUCERS" ]; then
+        error "Expected $NUM_PRODUCERS producers, found $actual. Aborting."
+        exit 1
+    fi
+    success "Verified $actual producers running"
 }
+
 
 start_load_producers() {
     local system="$1"
@@ -317,7 +316,43 @@ start_load_producers() {
     sleep 2
     rm -f /tmp/producer_*.log /tmp/producer.log
 
+    # ===== PRE-FLIGHT: verifikasi Kafka producerId readiness =====
+    # Gunakan venv python (punya modul kafka); fallback ke system python3.
+    # Bisa di-override via env PREFLIGHT_PY.
+    local PREFLIGHT_PY="${PREFLIGHT_PY:-}"
+    if [ -z "$PREFLIGHT_PY" ]; then
+        if [ -x "$PROJECT_ROOT/.venv/bin/python3" ]; then
+            PREFLIGHT_PY="$PROJECT_ROOT/.venv/bin/python3"
+        else
+            PREFLIGHT_PY="python3"
+        fi
+    fi
+    log "Pre-flight: sending 1 test message to verify Kafka producerId readiness (using $PREFLIGHT_PY)..."
+    local preflight_ok=0
+    for attempt in 1 2 3 4 5; do
+        if "$PREFLIGHT_PY" -c "
+from kafka import KafkaProducer
+p = KafkaProducer(bootstrap_servers='127.0.0.1:9092', max_block_ms=15000)
+p.send('$KAFKA_TOPIC', b'preflight').get(timeout=15)
+p.flush()
+" 2>/dev/null; then
+            preflight_ok=1
+            break
+        fi
+        log "Pre-flight attempt $attempt failed, retrying in 10s..."
+        sleep 10
+    done
+    if [ "$preflight_ok" != "1" ]; then
+        error "Pre-flight producer test failed after 5 attempts — Kafka producerId/controller not ready. Aborting."
+        exit 1
+    fi
+    success "Pre-flight OK — Kafka ready for producers"
+    # ===== END PRE-FLIGHT =====
+
+
+
     if [ "$NUM_PRODUCERS" -gt 1 ]; then
+
         log "Starting $NUM_PRODUCERS synchronized producers (round-robin partition, aggregate = target rate)..."
         cd "$SCRIPTS_DIR"
         BROKER="127.0.0.1:9092" \
@@ -326,16 +361,12 @@ start_load_producers() {
         CONFIG="$CONFIG_DIR/load.yaml" \
         LOG_DIR="/tmp" \
         KAFKA_CONTAINER="${system}-kafka" \
+        FAULT_START_TS="$FAULT_START_TS" \
         bash "$SCRIPTS_DIR/run_producers.sh" > "/tmp/${system}_producers_launcher.log" 2>&1 &
+
         PRODUCER_PID=$!
-        wait_for_producer_ready "/tmp/producer_0.log" "$PRODUCER_PID"
+        wait_for_producer_ready
         sleep 3
-        actual=$(pgrep -af producer.py | wc -l | tr -d ' ')
-        if [ "$actual" != "$NUM_PRODUCERS" ]; then
-            error "Expected $NUM_PRODUCERS producers, found $actual. Aborting."
-            exit 1
-        fi
-        success "Verified $actual producers running"
     else
         log "Starting single producer with dynamic load pattern (from config)..."
         cd "$SCRIPTS_DIR"
@@ -345,9 +376,10 @@ start_load_producers() {
             --config "$CONFIG_DIR/load.yaml" \
             > "$single_log" 2>&1 &
         PRODUCER_PID=$!
-        wait_for_producer_ready "$single_log" "$PRODUCER_PID"
+        wait_for_producer_ready
     fi
 }
+
 
 # Verify environment
 verify_environment() {
@@ -478,14 +510,8 @@ run_flink_experiment() {
     log "  Expected Duration: ~${EXPERIMENT_DURATION} seconds"
     log "  Dataset: $DATASET_PATH"
     
-    # Start producer(s) first so warmup traffic exists before metrics begin.
-    start_load_producers "flink" "/tmp/flink_producer.log"
-
-    log "Waiting ${WARMUP_SECONDS}s warmup before metrics collection..."
-    sleep "$WARMUP_SECONDS"
-
-    # Start metrics collection once the stream is active
-    log "Starting metrics collection (1s interval)..."
+    # 1) Collector starts FIRST so no load phase is missed.
+    log "Starting metrics collection BEFORE producers..."
     python3 "$SCRIPTS_DIR/metrics_collector.py" \
         --prometheus "http://localhost:9090" \
         --output "$METRICS_DIR/flink_metrics.csv" \
@@ -493,13 +519,23 @@ run_flink_experiment() {
         --interval 1 \
         --load-config "$CONFIG_DIR/load.yaml" &
     METRICS_PID=$!
-    log "Metrics started"
+    sleep 2   # collector fully up
 
-    # Start fault injection after metrics are running
-    log "Starting fault injection sequence (from config)..."
-    bash "$SCRIPTS_DIR/fault_injection.sh" flink "$CONFIG_DIR/fault.yaml" &
+    # 2) START_TS = t=0 for EVERYTHING (producer + fault).
+    START_TS=$(date +%s)
+    log "Experiment t=0 anchored to START_TS=${START_TS}"
+
+    # 3) Producer start (anchors its load phases to its launch time ~= START_TS).
+    FAULT_START_TS="$START_TS" start_load_producers "flink" "/tmp/flink_producer.log"
+
+    # 4) Fault injection starts with the SAME t=0 as the producer so fault.yaml
+    #    t=300/330/660 lines up with the load phases.
+    log "Starting fault injection (aligned with producer t=0)..."
+    FAULT_START_TS="$START_TS" bash "$SCRIPTS_DIR/fault_injection.sh" flink "$CONFIG_DIR/fault.yaml" &
     FAULT_PID=$!
     log "Fault injection started"
+
+
 
     # Wait for producer to finish, then collect remaining background work
     wait $PRODUCER_PID 2>/dev/null || true
@@ -545,14 +581,8 @@ run_spark_experiment() {
     log "  Expected Duration: ~${EXPERIMENT_DURATION} seconds"
     log "  Dataset: $DATASET_PATH"
     
-    # Start producer(s) first so warmup traffic exists before metrics begin.
-    start_load_producers "spark" "/tmp/spark_producer.log"
-
-    log "Waiting ${WARMUP_SECONDS}s warmup before metrics collection..."
-    sleep "$WARMUP_SECONDS"
-
-    # Start metrics collection once the stream is active
-    log "Starting metrics collection (1s interval)..."
+    # 1) Collector starts FIRST so no load phase is missed.
+    log "Starting metrics collection BEFORE producers..."
     python3 "$SCRIPTS_DIR/metrics_collector.py" \
         --prometheus "http://localhost:9090" \
         --output "$METRICS_DIR/spark_metrics.csv" \
@@ -560,13 +590,23 @@ run_spark_experiment() {
         --interval 1 \
         --load-config "$CONFIG_DIR/load.yaml" &
     METRICS_PID=$!
-    log "Metrics started"
+    sleep 2   # collector fully up
 
-    # Start fault injection after metrics are running
-    log "Starting fault injection sequence (SAME config as Flink)..."
-    bash "$SCRIPTS_DIR/fault_injection.sh" spark "$CONFIG_DIR/fault.yaml" &
+    # 2) START_TS = t=0 for EVERYTHING (producer + fault).
+    START_TS=$(date +%s)
+    log "Experiment t=0 anchored to START_TS=${START_TS}"
+
+    # 3) Producer start (anchors its load phases to its launch time ~= START_TS).
+    FAULT_START_TS="$START_TS" start_load_producers "spark" "/tmp/spark_producer.log"
+
+    # 4) Fault injection starts with the SAME t=0 as the producer so fault.yaml
+    #    t=300/330/660 lines up with the load phases.
+    log "Starting fault injection (aligned with producer t=0)..."
+    FAULT_START_TS="$START_TS" bash "$SCRIPTS_DIR/fault_injection.sh" spark "$CONFIG_DIR/fault.yaml" &
     FAULT_PID=$!
     log "Fault injection started"
+
+
 
     # Wait for producer to finish, then collect remaining background work
     wait $PRODUCER_PID 2>/dev/null || true
@@ -610,9 +650,8 @@ run_fault_scenario() {
     log "Scenario output CSV: $output_csv"
     log "Scenario fault config: $fault_config"
 
-    start_load_producers "$system" "/tmp/${system}_fault_producer.log"
-    sleep "$WARMUP_SECONDS"
-
+    # 1) Collector starts FIRST so no load phase is missed.
+    log "Starting metrics collection BEFORE producers..."
     python3 "$SCRIPTS_DIR/metrics_collector.py" \
         --prometheus "http://localhost:9090" \
         --output "$output_csv" \
@@ -620,9 +659,22 @@ run_fault_scenario() {
         --interval 1 \
         --load-config "$CONFIG_DIR/load.yaml" &
     METRICS_PID=$!
+    sleep 2   # collector fully up
 
-    bash "$SCRIPTS_DIR/fault_injection.sh" "$system" "$fault_config" &
+    # 2) START_TS = t=0 for EVERYTHING (producer + fault).
+    START_TS=$(date +%s)
+    log "Experiment t=0 anchored to START_TS=${START_TS}"
+
+    # 3) Producer start (anchors its load phases to its launch time ~= START_TS).
+    FAULT_START_TS="$START_TS" start_load_producers "$system" "/tmp/${system}_fault_producer.log"
+
+    # 4) Fault injection starts with the SAME t=0 as the producer so fault.yaml
+    #    t=300/330/660 lines up with the load phases.
+    log "Starting fault injection (aligned with producer t=0)..."
+    FAULT_START_TS="$START_TS" bash "$SCRIPTS_DIR/fault_injection.sh" "$system" "$fault_config" &
     FAULT_PID=$!
+
+
 
     wait $PRODUCER_PID 2>/dev/null || true
     wait $FAULT_PID 2>/dev/null || true

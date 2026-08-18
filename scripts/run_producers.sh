@@ -25,11 +25,13 @@ LOG_DIR="${LOG_DIR:-/tmp}"
 KAFKA_CONTAINER="${KAFKA_CONTAINER:-spark-kafka}"
 
 # Prefer the project venv python (system python3 may lack `yaml`/`kafka`).
-if [ -x "$PROJECT_ROOT/.venv-1/bin/python3" ]; then
-  PYTHON="$PROJECT_ROOT/.venv-1/bin/python3"
+if [ -x "$PROJECT_ROOT/.venv/bin/python3" ]; then
+    PYTHON="$PROJECT_ROOT/.venv/bin/python3"
 else
-  PYTHON="python3"
+    PYTHON="python3"
 fi
+
+echo "[run_producers] Using Python: $PYTHON"
 
 echo "[run_producers] Starting $NUM_PRODUCERS producers (broker=$BROKER topic=$TOPIC)"
 echo "[run_producers] Config: $CONFIG"

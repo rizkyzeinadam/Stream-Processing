@@ -1,0 +1,31 @@
+# Stress test load profile — buktikan zona terukur (penguji poin 3)
+# 5 level beban x 60s = 300s total. Tanpa fault. Ukur throughput aktual vs target.
+kafka_topic: "cic-topic"
+total_duration: 300
+
+load_pattern:
+  - rate: 50
+    duration: 60
+  - rate: 100
+    duration: 60
+  - rate: 500
+    duration: 60
+  - rate: 1000
+    duration: 60
+  - rate: 1500
+    duration: 60
+
+event_delay_ms: 0
+
+# Dataset replay DISABLED untuk stress test.
+# Alasan: iterasi parquet 1GB row-by-row di producer.py sangat lambat
+# (~2.6s/row) sehingga producer macet & nggak nyampe target rate.
+# Stress test mengukur throughput, bukan fidelitas payload -> pakai
+# synthetic payload (cepat) dari fallback di producer.py.
+# Kalau mau replay dataset beneran, aktifkan kembali blok di bawah.
+# dataset:
+#   path: "../cic-collection.parquet"
+#   replay_mode: "loop"
+#   deterministic: true
+
+

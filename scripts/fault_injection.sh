@@ -8,7 +8,7 @@ set -e
 
 LOG_FILE="/tmp/fault_injection.log"
 SYSTEM="${1:-flink}"  # 'flink' or 'spark'
-FAULT_CONFIG="${2:-/Users/rizkyzeinadam/Documents/Percobaan Tesis/config/fault.yaml}"
+FAULT_CONFIG="${2:-/mnt/c/Users/Rizky Zein Adam/Documents/tesis/Thesis/config/fault.yaml}"
 FLINK_JOB_UI="${FLINK_JOB_UI:-http://localhost:8083}"
 FLINK_JOB_CONTAINER="${FLINK_JOB_CONTAINER:-flink-jobmanager}"
 FLINK_JOB_JAR="${FLINK_JOB_JAR:-/tmp/cic-flink-job.jar}"
@@ -254,7 +254,9 @@ run_faults_from_yaml() {
         return 1
     fi
     
-    local start_time=$(date +%s)
+    local start_time="${FAULT_START_TS:-$(date +%s)}"
+    log "Fault timeline t=0 anchored to ${start_time} (FAULT_START_TS=${FAULT_START_TS:-unset, using now})"
+
 
     # Parse each fault block into one line: time|action|target|delay|loss|source
     awk '
@@ -310,13 +312,22 @@ run_faults_from_yaml() {
     ' "$FAULT_CONFIG" | while IFS='|' read -r fault_time fault_action fault_target fault_delay fault_loss fault_source; do
         [ -z "$fault_time" ] && continue
 
-        now_elapsed=$(($(date +%s) - start_time))
-        wait_time=$((fault_time - now_elapsed))
-        if [ $wait_time -gt 0 ]; then
-            log "Waiting $wait_time seconds until t=$fault_time"
-            sleep $wait_time
-        fi
+        fault_time=$(printf '%s' "$fault_time" | tr -cd '0-9')
 
+    if [ -z "$fault_time" ]; then
+        log "WARNING: Invalid fault time, skipping fault"
+        continue
+    fi
+
+    now_elapsed=$(date +%s)
+    now_elapsed=$((now_elapsed - start_time))
+
+    wait_time=$((fault_time - now_elapsed))
+
+    if [ "$wait_time" -gt 0 ]; then
+        log "Waiting $wait_time seconds until t=$fault_time"
+        sleep "$wait_time"
+    fi
         apply_fault "$fault_time" "$fault_action" "$fault_target" "$fault_delay" "$fault_loss" "$fault_source"
     done
     

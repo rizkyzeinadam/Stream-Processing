@@ -39,6 +39,7 @@ public class CicSparkStreamingJob {
     private static volatile double currentThroughputWorker2 = 0.0;
     private static volatile double currentLatency = 0.0;
     private static volatile long totalCount = 0;
+    private static volatile long lastBatchStart = 0L;
 
     // Backlog is computed from true Kafka end offsets, not from throughput.
     private static String bootstrapServersStatic = null;
@@ -181,7 +182,10 @@ public class CicSparkStreamingJob {
                         if (!Double.isNaN(avgLat)) currentLatency = avgLat;
                     }
                     totalCount += count;
-                    currentThroughput = count;
+                    long now = System.currentTimeMillis();
+                    double intervalSec = (lastBatchStart > 0) ? (now - lastBatchStart) / 1000.0 : 1.0;
+                    lastBatchStart = now;
+                    currentThroughput = (double) count / Math.max(intervalSec, 1e-3);
                     currentThroughputWorker1 = worker1Count;
                     currentThroughputWorker2 = worker2Count;
                     recoveryValidator.recordMessage(totalCount);

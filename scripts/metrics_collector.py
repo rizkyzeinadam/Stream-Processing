@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import Dict, List, Any
 import json
 import yaml
+import subprocess
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,8 +38,12 @@ class MetricsCollector:
         self.recovery_start_time = None
         self.last_recovery_time = 0.0
         self.default_load_rate = 100
-        logger.info(f"Connected to Prometheus at {prometheus_url}")
 
+        # Docker stats cache
+        self._stats_ts = 0.0
+        self._stats_cache = {}
+
+        logger.info(f"Connected to Prometheus at {prometheus_url}")
     def check_prometheus_health(self, retries: int = 5, delay: float = 5.0) -> bool:
         """Return True if Prometheus is reachable, retrying a few times."""
         for attempt in range(1, retries + 1):
@@ -126,19 +131,68 @@ class MetricsCollector:
             'avg(spark_streaming_latency_average)',
         ])
     
+    def get_docker_stats(self) -> Dict[str, Dict[str, float]]:
+        """Get per-container CPU% and memory MiB via docker stats (cached 5s)."""
+        now = time.time()
+        if now - self._stats_ts < 5.0:
+            return self._stats_cache
+        try:
+            out = subprocess.run(
+                ["docker", "stats", "--no-stream", "--format", "{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}"],
+                capture_output=True, text=True, timeout=30
+            )
+            if out.returncode != 0:
+                logger.error(f"docker stats failed: {out.stderr[:200]}")
+                return {}
+            result = {}
+            for line in out.stdout.strip().splitlines():
+                parts = line.split("|")
+                if len(parts) != 3:
+                    continue
+                name, cpu_s, mem_s = parts
+                try:
+                    cpu = float(cpu_s.replace("%", "").strip())
+                except ValueError:
+                    cpu = math.nan
+                mem_part = mem_s.split("/")[0].strip()
+                result[name] = {"cpu": cpu, "mem_mib": self._mem_to_mib(mem_part)}
+            self._stats_ts = now
+            self._stats_cache = result
+            return result
+        except Exception as e:
+            logger.error(f"docker stats error: {e}")
+            return {}
+
+    @staticmethod
+    def _mem_to_mib(s: str) -> float:
+        """Convert docker stats mem string ('1.52GiB', '512MiB') to MiB."""
+        try:
+            num = float(s[:-3])
+            unit = s[-3:]
+            mult = {"KiB": 1/1024, "MiB": 1.0, "GiB": 1024.0, "kB": 1/1048.576, "MB": 0.953674, "GB": 953.674}
+            return num * mult.get(unit, 1.0)
+        except (ValueError, IndexError):
+            return math.nan
+
     def get_cpu_usage(self) -> float:
-        """Get aggregated CPU usage for the active framework via cAdvisor container metrics."""
-        framework = self.detect_framework()
-        cpu_metrics = self.get_framework_cpu(framework)
-        total = float(cpu_metrics.get('total', math.nan))
-        return total if math.isfinite(total) else math.nan
+        """Aggregated CPU for framework containers via docker stats (mean)."""
+        stats = self.get_docker_stats()
+        containers = {
+            'flink': ['flink-jobmanager', 'flink-taskmanager1', 'flink-taskmanager2'],
+            'spark': ['spark-driver', 'spark-worker1', 'spark-worker2'],
+            }[self.detect_framework()]
+        cpus = [stats[c]["cpu"] for c in containers if c in stats and math.isfinite(stats[c]["cpu"])]
+        return sum(cpus) / len(cpus) if cpus else math.nan
 
     def get_memory_usage(self) -> float:
-        """Get aggregated memory usage in MiB for the active framework via cAdvisor container metrics."""
-        framework = self.detect_framework()
-        memory_metrics = self.get_framework_memory(framework)
-        total = float(memory_metrics.get('total', math.nan))
-        return total if math.isfinite(total) else math.nan
+        """Aggregated memory MiB for framework containers via docker stats (sum)."""
+        stats = self.get_docker_stats()
+        containers = {
+            'flink': ['flink-jobmanager', 'flink-taskmanager1', 'flink-taskmanager2'],
+            'spark': ['spark-driver', 'spark-worker1', 'spark-worker2'],
+        }[self.detect_framework()]
+        mems = [stats[c]["mem_mib"] for c in containers if c in stats and math.isfinite(stats[c]["mem_mib"])]
+        return sum(mems) if mems else math.nan
 
     def detect_framework(self) -> str:
         """Infer the active framework from Prometheus scrape jobs.

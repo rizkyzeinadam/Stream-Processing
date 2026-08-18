@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-PROJECT_ROOT="/Users/rizkyzeinadam/Documents/Percobaan Tesis"
+PROJECT_ROOT="/mnt/c/Users/Rizky Zein Adam/Documents/tesis/Thesis"
 FLINK_JOB_DIR="${PROJECT_ROOT}/flink-jobs"
 
 cd "$FLINK_JOB_DIR"
