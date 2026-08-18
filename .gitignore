@@ -1,4 +1,5 @@
 cic-collection.parquet
 *.parquet
 /docker-compose/spark-checkpoints/*
-/data/cic-ids-2018/cic.csv
+/data/cic-ids-2018/*
+data/cic-ids-2018/
