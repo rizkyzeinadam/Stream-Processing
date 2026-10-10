@@ -4,11 +4,11 @@
 # Uses YAML configuration for reproducibility
 # Ensures identical faults for both Flink and Spark
 
-set -e
-
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 LOG_FILE="/tmp/fault_injection.log"
 SYSTEM="${1:-flink}"  # 'flink' or 'spark'
-FAULT_CONFIG="${2:-/mnt/c/Users/Rizky Zein Adam/Documents/tesis/Thesis/config/fault.yaml}"
+FAULT_CONFIG="${2:-$PROJECT_ROOT/config/fault.yaml}"
 FLINK_JOB_UI="${FLINK_JOB_UI:-http://localhost:8083}"
 FLINK_JOB_CONTAINER="${FLINK_JOB_CONTAINER:-flink-jobmanager}"
 FLINK_JOB_JAR="${FLINK_JOB_JAR:-/tmp/cic-flink-job.jar}"

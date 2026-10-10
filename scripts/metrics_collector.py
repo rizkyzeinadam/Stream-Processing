@@ -11,7 +11,7 @@ import logging
 import argparse
 import math
 from datetime import datetime
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Tuple
 import json
 import yaml
 import subprocess
@@ -42,6 +42,7 @@ class MetricsCollector:
         # Docker stats cache
         self._stats_ts = 0.0
         self._stats_cache = {}
+        self._framework_cache = None
 
         logger.info(f"Connected to Prometheus at {prometheus_url}")
     def check_prometheus_health(self, retries: int = 5, delay: float = 5.0) -> bool:
@@ -59,31 +60,36 @@ class MetricsCollector:
         return False
 
     def query_prometheus(self, query: str) -> Any:
-        """Query Prometheus for metrics"""
+        """Query Prometheus for metrics with short timeout to prevent sampling delays."""
         try:
             response = requests.get(
                 f"{self.prometheus_url}/api/v1/query",
                 params={'query': query},
-                timeout=10
+                timeout=2
             )
             response.raise_for_status()
             return response.json()
         except Exception as e:
-            logger.error(f"Error querying Prometheus: {e}")
+            logger.debug(f"Prometheus query failed for '{query}': {e}")
             return None
 
-    def query_first_value(self, queries: List[str]) -> float:
-        """Try multiple Prometheus queries and return the first available numeric value."""
+    def query_first_value_with_source(self, queries: List[str]) -> Tuple[float, str]:
+        """Try multiple Prometheus queries and return (value, source_query)."""
         for query in queries:
             result = self.query_prometheus(query)
             if result and result.get('data', {}).get('result'):
                 try:
                     value = float(result['data']['result'][0]['value'][1])
                     if math.isfinite(value):
-                        return value
+                        return value, query
                 except (IndexError, ValueError, KeyError, TypeError):
                     continue
-        return math.nan
+        return math.nan, "none"
+
+    def query_first_value(self, queries: List[str]) -> float:
+        """Try multiple Prometheus queries and return the first available numeric value."""
+        val, _ = self.query_first_value_with_source(queries)
+        return val
     
     def query_range(self, query: str, start: float, end: float, step: str = '15s') -> Any:
         """Query Prometheus for metric range"""
@@ -104,31 +110,47 @@ class MetricsCollector:
             logger.error(f"Error querying Prometheus range: {e}")
             return None
     
-    def get_throughput(self) -> float:
-        """Get current throughput (messages/sec)."""
-        return self.query_first_value([
+    def get_throughput(self) -> Tuple[float, str]:
+        """Get current stream processing consumption throughput (messages/sec) and its metric source.
+        
+        Returns (math.nan, "none") if no consumption metrics are available (e.g. during framework outage).
+        Does NOT fallback to Kafka producer offset rate.
+        """
+        val, source = self.query_first_value_with_source([
             'sum(flink_taskmanager_job_task_operator_KafkaSourceReader_KafkaConsumer_records_consumed_rate)',
             'sum(flink_taskmanager_job_task_operator_numRecordsInPerSecond)',
             'sum(flink_taskmanager_job_task_operator_numRecordsOutPerSecond)',
             'sum(flink_taskmanager_job_task_numRecordsInPerSecond)',
             'sum(flink_taskmanager_job_task_numRecordsOutPerSecond)',
-            'sum(flink_taskmanager_job_task_operator_numRecordsInPerSecond)',
             'sum(spark_streaming_throughput)',
             'sum(spark_streaming_throughput_worker1 + spark_streaming_throughput_worker2)',
-            'sum(rate(kafka_topic_partition_current_offset[30s]))',
         ])
+        if math.isfinite(val) and val >= 0:
+            return val, source
+        return math.nan, "none"
+
+    def get_target_up(self) -> int:
+        """1 kalau pengekspor metrik throughput hidup, 0 kalau tidak.
+
+        Cek HANYA target pengekspor metrik, per framework. Jangan menjumlahkan
+        flink + spark-app + spark-worker.* sekaligus: pada skenario central, driver
+        Spark mati tetapi worker Spark tetap UP sehingga jumlahnya > 0 padahal
+        metrik throughput sudah tidak bisa diambil.
+        """
+        if self.detect_framework() == 'flink':
+            return 1 if self._has_result('up{job="flink"}') else 0
+        return 1 if self._has_result('up{job="spark-app"}') else 0
 
     
     def get_latency(self) -> float:
-        """Get average latency (ms)."""
+        """Get average end-to-end latency (ms) from Kafka event timestamp to processing."""
         return self.query_first_value([
-            'avg(flink_taskmanager_job_task_operator_fetch_latency_avg)',
-            'avg(flink_taskmanager_job_latency_source_id_operator_id_operator_subtask_index_latency)',
             'avg(flink_taskmanager_job_task_operator_latency)',
-            'avg(flink_taskmanager_job_latency)',
-            'avg(flink_taskmanager_job_task_operator_average_record_delay_millis)',
             'avg(spark_streaming_latency)',
             'avg(spark_streaming_latency_average)',
+            'avg(flink_taskmanager_job_task_operator_average_record_delay_millis)',
+            'avg(flink_taskmanager_job_latency_source_id_operator_id_operator_subtask_index_latency)',
+            'avg(flink_taskmanager_job_latency)',
         ])
     
     def get_docker_stats(self) -> Dict[str, Dict[str, float]]:
@@ -199,19 +221,40 @@ class MetricsCollector:
 
         The Flink Prometheus config exposes job 'flink'; the Spark config exposes
         'spark-master'/'spark-worker1'/'spark-worker2'/'spark-app'. Keying off the
-        `up{}` targets (rather than a data metric) avoids misdetection when a metric
-        name differs or the stream is momentarily idle.
+        configured jobs avoids misdetection when a metric name differs or the stream
+        is momentarily idle or during fault recovery.
         """
-        if self._has_result('up{job="flink"}'):
+        if self._framework_cache:
+            return self._framework_cache
+
+        res_flink = self.query_prometheus('count(up{job="flink"})')
+        if res_flink and res_flink.get('data', {}).get('result'):
+            self._framework_cache = 'flink'
             return 'flink'
-        if self._has_result('up{job=~"spark-master|spark-worker1|spark-worker2|spark-app"}'):
+
+        res_spark = self.query_prometheus('count(up{job=~"spark-master|spark-worker1|spark-worker2|spark-app"})')
+        if res_spark and res_spark.get('data', {}).get('result'):
+            self._framework_cache = 'spark'
             return 'spark'
+
+        self._framework_cache = 'spark'
         return 'spark'
 
     def _has_result(self, query: str) -> bool:
-        """Return True if the Prometheus query returns at least one result series."""
+        """Return True if the Prometheus query returns at least one result series.
+        
+        For 'up' queries without an explicit comparison operator, checks that at least
+        one series has value > 0 (target is UP, not DOWN with value 0).
+        """
         result = self.query_prometheus(query)
-        return bool(result and result.get('data', {}).get('result'))
+        if not (result and result.get('data', {}).get('result')):
+            return False
+        if query.startswith('up{') and not any(op in query for op in ('==', '!=', '>', '<')):
+            try:
+                return any(float(item['value'][1]) > 0 for item in result['data']['result'])
+            except (IndexError, ValueError, KeyError, TypeError):
+                return False
+        return True
 
     def get_cpu_per_container(self, container_name: str) -> float:
         """Get CPU usage for a specific container via cAdvisor metrics."""
@@ -283,30 +326,29 @@ class MetricsCollector:
         ])
 
     def get_recovery_time(self, effective_lag: float) -> float:
-        """Estimate recovery time window while backlog exists and preserve last completed recovery."""
-        if not math.isfinite(effective_lag):
-            return self.last_recovery_time if self.last_recovery_time else 0.0
+        """Track active backlog duration in seconds while kafka_lag > 0.
+        
+        Note: Recovery time in the thesis is computed offline from the throughput
+        time-series. Live in CSV, this metric represents active backlog duration.
+        """
+        if not math.isfinite(effective_lag) or effective_lag <= 0:
+            self.recovery_start_time = None
+            return 0.0
 
         now = time.time()
-        if effective_lag > 0:
-            if self.recovery_start_time is None:
-                self.recovery_start_time = now
-            return max(now - self.recovery_start_time, 0.001)
-
-        if self.recovery_start_time is not None:
-            self.last_recovery_time = now - self.recovery_start_time
-            self.recovery_start_time = None
-
-        return self.last_recovery_time
+        if self.recovery_start_time is None:
+            self.recovery_start_time = now
+        return max(now - self.recovery_start_time, 0.001)
     
     def collect_metrics(self, load_rate: int) -> Dict[str, Any]:
         """Collect all metrics at once."""
         elapsed = time.time() - self.start_time if self.start_time else 0
-        throughput = self.get_throughput()
+        throughput, tp_source = self.get_throughput()
         latency = self.get_latency()
         raw_lag = self.get_kafka_lag()
         kafka_lag = raw_lag if math.isfinite(raw_lag) and raw_lag >= 0 else math.nan
-        recovery_time = self.get_recovery_time(kafka_lag) if math.isfinite(kafka_lag) else 0.0
+        lag_active_seconds = self.get_recovery_time(kafka_lag) if math.isfinite(kafka_lag) else 0.0
+        target_up = self.get_target_up()
         cpu = self.get_cpu_usage()
         memory = self.get_memory_usage()
         
@@ -319,15 +361,21 @@ class MetricsCollector:
             'cpu': cpu,
             'memory': memory,
             'kafka_lag': kafka_lag,
-            'recovery_time': recovery_time,
+            'lag_active_seconds': lag_active_seconds,
+            'recovery_time': lag_active_seconds,  # alias for backward-compatibility with downstream plotting
+            'target_up': target_up,
+            'throughput_source': tp_source,
         }
         
         self.metrics.append(metric)
-        logger.info(f"Collected metrics - Throughput: {metric['throughput']:.1f} msg/s, "
-               f"Latency: {metric['latency']:.1f}ms, "
+        tp_str = f"{metric['throughput']:.1f}" if math.isfinite(metric['throughput']) else "NaN"
+        lat_str = f"{metric['latency']:.1f}" if math.isfinite(metric['latency']) else "NaN"
+        logger.info(f"Collected metrics - Throughput: {tp_str} msg/s ({tp_source}), "
+               f"Latency: {lat_str}ms, "
                    f"CPU: {metric['cpu']:.1f}%, "
                    f"Memory: {metric['memory']:.1f} MiB, "
-                   f"Lag: {metric['kafka_lag']:.0f}")
+                   f"Lag: {metric['kafka_lag']:.0f}, "
+                   f"Up: {target_up}")
         
         return metric
 
@@ -360,7 +408,8 @@ class MetricsCollector:
             with open(output_file, 'w', newline='') as f:
                 fieldnames = [
                     'timestamp', 'elapsed_seconds', 'load_rate', 'throughput',
-                    'latency', 'cpu', 'memory', 'kafka_lag', 'recovery_time'
+                    'latency', 'cpu', 'memory', 'kafka_lag', 'lag_active_seconds',
+                    'recovery_time', 'target_up', 'throughput_source'
                 ]
                 writer = csv.DictWriter(f, fieldnames=fieldnames)
                 writer.writeheader()

@@ -4,9 +4,8 @@
 # Executes synchronized fault recovery evaluation for both Flink and Spark
 # Uses YAML configuration for reproducible, identical experiments
 
-set -e
-
-PROJECT_ROOT="/mnt/c/Users/Rizky Zein Adam/Documents/tesis/Thesis"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 DOCKER_COMPOSE_DIR="${PROJECT_ROOT}/docker-compose"
 SCRIPTS_DIR="${PROJECT_ROOT}/scripts"
 METRICS_DIR="${PROJECT_ROOT}/metrics"
@@ -22,6 +21,9 @@ SERVICE_TIMEOUT_SECONDS="${SERVICE_TIMEOUT_SECONDS:-150}"
 KAFKA_TOPIC="${KAFKA_TOPIC:-cic-topic}"
 PRODUCER_READY_TIMEOUT_SECONDS="${PRODUCER_READY_TIMEOUT_SECONDS:-300}"
 NUM_PRODUCERS="${NUM_PRODUCERS:-10}"
+# Load config default = multi-fault (load.yaml). Skenario single-node & central
+# override ke load_ramp.yaml (ramp monotonik 100->1000, 600s) di fungsi masing-masing.
+LOAD_CONFIG="${LOAD_CONFIG:-$CONFIG_DIR/load.yaml}"
 FLINK_MODE="${FLINK_MODE:-B}"
 FLINK_GRAFANA_PORT="${FLINK_GRAFANA_PORT:-3001}"
 SPARK_GRAFANA_PORT="${SPARK_GRAFANA_PORT:-3002}"
@@ -156,19 +158,49 @@ wait_for_kafka_host_listener() {
 }
 
 
+# Truncate topic: delete + loop sampai BENAR-BENAR hilang (delete Kafka itu async),
+# lalu create + loop sampai muncul. Bukan sleep statis yang bisa gagal diam-diam.
+truncate_topic() {
+    local kafka_container="$1"
+    local topic="$2"
+    local i n
+
+    log "Truncate topic ${topic} on ${kafka_container} (delete + loop sampai kosong)..."
+    docker exec "$kafka_container" kafka-topics --bootstrap-server localhost:29092 --delete --topic "$topic" >/dev/null 2>&1 || true
+
+    # Loop sampai topic beneran hilang dari --list (delete async).
+    for i in $(seq 1 30); do
+        n=$(docker exec "$kafka_container" kafka-topics --bootstrap-server localhost:29092 --list 2>/dev/null | grep -c "^${topic}$" || true)
+        [ "$n" = "0" ] && break
+        sleep 2
+    done
+    if [ "$n" != "0" ]; then
+        error "Topic ${topic} tidak hilang setelah 60s — truncate GAGAL. Abort."
+        exit 1
+    fi
+
+    docker exec "$kafka_container" kafka-topics --bootstrap-server localhost:29092 \
+        --create --topic "$topic" --partitions 2 --replication-factor 1 >/tmp/kafka_topic_create.log 2>&1
+
+    # Loop sampai topic beneran muncul.
+    for i in $(seq 1 30); do
+        n=$(docker exec "$kafka_container" kafka-topics --bootstrap-server localhost:29092 --list 2>/dev/null | grep -c "^${topic}$" || true)
+        [ "$n" = "1" ] && break
+        sleep 2
+    done
+    if [ "$n" != "1" ]; then
+        error "Topic ${topic} tidak muncul setelah create — abort."
+        exit 1
+    fi
+    success "Kafka topic ${topic} ready with 2 partitions (bersih)"
+}
+
 create_kafka_topic() {
     local kafka_container="$1"
     log "Creating Kafka topic ${KAFKA_TOPIC} with 2 partitions on ${kafka_container}..."
-    if docker exec "$kafka_container" kafka-topics --bootstrap-server localhost:29092 --delete --topic "$KAFKA_TOPIC" >/dev/null 2>&1; then
-        log "Existing topic ${KAFKA_TOPIC} deletion requested"
-        sleep 5
-    fi
-
-    docker exec "$kafka_container" kafka-topics --bootstrap-server localhost:29092 --create --if-not-exists --topic "$KAFKA_TOPIC" --partitions 2 --replication-factor 1 >/tmp/kafka_topic_create.log 2>&1
-    docker exec "$kafka_container" kafka-topics --bootstrap-server localhost:29092 --describe --topic "$KAFKA_TOPIC" >/tmp/kafka_topic_describe.log 2>&1 || true
-
-    success "Kafka topic ${KAFKA_TOPIC} ready with 2 partitions"
+    truncate_topic "$kafka_container" "$KAFKA_TOPIC"
 }
+
 
 warmup_or_wait() {
     if [ "$WARMUP_SECONDS" -gt 0 ]; then
@@ -358,7 +390,7 @@ p.flush()
         BROKER="127.0.0.1:9092" \
         TOPIC="$KAFKA_TOPIC" \
         NUM_PRODUCERS="$NUM_PRODUCERS" \
-        CONFIG="$CONFIG_DIR/load.yaml" \
+        CONFIG="$LOAD_CONFIG" \
         LOG_DIR="/tmp" \
         KAFKA_CONTAINER="${system}-kafka" \
         FAULT_START_TS="$FAULT_START_TS" \
@@ -373,7 +405,7 @@ p.flush()
         python3 producer.py \
             --broker "127.0.0.1:9092" \
             --topic "$KAFKA_TOPIC" \
-            --config "$CONFIG_DIR/load.yaml" \
+            --config "$LOAD_CONFIG" \
             > "$single_log" 2>&1 &
         PRODUCER_PID=$!
         wait_for_producer_ready
@@ -657,7 +689,7 @@ run_fault_scenario() {
         --output "$output_csv" \
         --duration "$METRICS_DURATION" \
         --interval 1 \
-        --load-config "$CONFIG_DIR/load.yaml" &
+        --load-config "$LOAD_CONFIG" &
     METRICS_PID=$!
     sleep 2   # collector fully up
 
@@ -686,11 +718,17 @@ run_fault_scenario() {
 
 run_single_node_failure() {
     local system="$1"
+    # Skenario single-node pakai load ramp monotonik 100->1000 (600s), bukan multi-fault.
+    LOAD_CONFIG="$CONFIG_DIR/load_ramp.yaml"
+    METRICS_DURATION=600
     run_fault_scenario "$system" "$CONFIG_DIR/fault_single_node.yaml" "$METRICS_DIR/${system}_single_node_failure.csv"
 }
 
 run_central_component_failure() {
     local system="$1"
+    # Skenario central pakai load ramp yang SAMA dengan single-node (100->1000, 600s).
+    LOAD_CONFIG="$CONFIG_DIR/load_ramp.yaml"
+    METRICS_DURATION=600
     run_fault_scenario "$system" "$CONFIG_DIR/fault_central_component.yaml" "$METRICS_DIR/${system}_central_component_failure.csv"
 }
 

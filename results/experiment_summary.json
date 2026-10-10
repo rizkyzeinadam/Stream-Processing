@@ -1,0 +1,115 @@
+{
+  "timestamp": "2026-10-10T19:15:53.934787",
+  "fault_time": 300.0,
+  "analysis": {
+    "Flink": {
+      "Throughput": {
+        "average": 538.8828204502128,
+        "peak": 1899.2338657317232
+      },
+      "Latency": {
+        "average": 102.83187698412698,
+        "peak": 267.91
+      },
+      "Backpressure": {
+        "max_lag_raw": 271309.0,
+        "peak_backlog_run": 825.3821395773008,
+        "peak_backlog_fault_window": 672.5805164756257
+      },
+      "Resource": {
+        "cpu_avg": 16.002506337135614,
+        "mem_avg_mb": 1127.684752851711,
+        "mem_peak_mb": 1416.2
+      },
+      "Recovery": {
+        "fault_time": 300.0,
+        "t1": 341.76610016822815,
+        "t2": 358.58236932754517,
+        "interval": 16.816269159317017,
+        "unmeasurable_window": null
+      },
+      "Deficit": {
+        "throughput_deficit_pct": 8.140192109901456
+      },
+      "DataLoss": {
+        "loss_percentage": 8.119169025344648,
+        "total_input_events": 308500,
+        "total_output_events": 283452,
+        "missing_events": 25048
+      }
+    },
+    "Spark": {
+      "Throughput": {
+        "average": 539.8175081825323,
+        "peak": 1316.2790697674418
+      },
+      "Latency": {
+        "average": 183.18290173305274,
+        "peak": 444.0
+      },
+      "Backpressure": {
+        "max_lag_raw": 750.0,
+        "peak_backlog_run": 404.14201183431953,
+        "peak_backlog_fault_window": 404.14201183431953
+      },
+      "Resource": {
+        "cpu_avg": 67.41513835263835,
+        "mem_avg_mb": 2791.2166023166023,
+        "mem_peak_mb": 3756.032
+      },
+      "Recovery": {
+        "fault_time": 300.0,
+        "t1": 300.0,
+        "t2": 327.3445394039154,
+        "interval": 27.344539403915405,
+        "unmeasurable_window": null
+      },
+      "Deficit": {
+        "throughput_deficit_pct": 7.258905696015338
+      },
+      "DataLoss": {
+        "loss_percentage": 7.439434214315799,
+        "total_input_events": 302100,
+        "total_output_events": 279625,
+        "missing_events": 22475
+      }
+    }
+  },
+  "comparison": [
+    {
+      "Metric": "Throughput (Avg)",
+      "Flink": 538.88,
+      "Spark": 539.82
+    },
+    {
+      "Metric": "Throughput (Peak)",
+      "Flink": 1899.23,
+      "Spark": 1316.28
+    },
+    {
+      "Metric": "Stabilization Interval (s)",
+      "Flink": 16.82,
+      "Spark": 27.34
+    },
+    {
+      "Metric": "Throughput Deficit (%)",
+      "Flink": 8.14,
+      "Spark": 7.26
+    },
+    {
+      "Metric": "Peak Backlog (msg/s)",
+      "Flink": 825.38,
+      "Spark": 404.14
+    },
+    {
+      "Metric": "Peak Memory (MB)",
+      "Flink": 1416.2,
+      "Spark": 3756.03
+    },
+    {
+      "Metric": "CPU Usage (Avg, %)",
+      "Flink": 16.0,
+      "Spark": 67.42
+    }
+  ]
+}

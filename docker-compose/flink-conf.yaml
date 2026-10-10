@@ -47,5 +47,3 @@ log.file: /opt/flink/log/taskmanager.log
 log.file.max: 5
 log.file.max-index: 5
 jobmanager.scheduler: adaptive
-blob.server.port: 6124
-query.server.port: 6125

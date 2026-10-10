@@ -1,15 +1,58 @@
 #!/usr/bin/env python3
-"""Generate Flink/Spark markdown reports and experiment summary from metrics CSV files."""
+"""Generate Flink/Spark markdown reports and experiment summary from metrics CSV files.
+
+PENTING (perbaikan 10 Okt 2026)
+-------------------------------
+File ini DULU punya salinan definisi metrik sendiri (compute_recovery_interval,
+compute_throughput_deficit). Salinan itu berbeda dari definisi naskah dan menghasilkan
+angka yang salah:
+
+  * "stabilization interval" selalu 0,00 s (fungsi tidak pernah menemukan jendela stabil),
+  * baseline diambil dari rata-rata 10 sampel pertama (fase warm-up), bukan 60 s pra-fault,
+  * T2 dicari mulai dari T1, bukan dari akhir jendela fault aktif, sehingga komponen yang
+    masih mati bisa terlihat "sudah pulih",
+  * jendela pelapor-mati (t = 120-180 s di skenario central) tidak ditolkan, sehingga
+    deficit Spark keluar 15,14% alih-alih 19,35% seperti naskah,
+  * tidak ada penjaga celah koleksi (dt > 30 s diekstrapolasi).
+
+Sekarang metrik TIDAK didefinisikan di sini. Semuanya mendelegasi ke SATU implementasi
+kanonik di analysis_recovery_metrics.py. Kalau file kanonik tidak ketemu, skrip ini
+BERHENTI -- sengaja tanpa salinan cadangan, karena salinan cadangan itulah yang dulu
+membuat angka laporan melenceng dari Tabel 1 naskah.
+
+Pakai:
+    python generate_report.py --flink-metrics flink_central_rep1.csv \
+        --spark-metrics spark_central_rep1.csv --fault-time 120 \
+        --flink-report out/flink.md --spark-report out/spark.md \
+        --comparison-report out/comparison.md
+"""
 
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
+import math
+import os
+import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List
+from statistics import mean
+from typing import Dict, List, Optional
 
 import pandas as pd
+
+
+NUMERIC_COLS = [
+    "elapsed_seconds",
+    "load_rate",
+    "throughput",
+    "latency",
+    "cpu",
+    "memory",
+    "kafka_lag",
+    "recovery_time",
+]
 
 
 def load_metrics(path: Path) -> pd.DataFrame:
@@ -20,24 +63,62 @@ def load_metrics(path: Path) -> pd.DataFrame:
     if df.empty:
         raise ValueError(f"Metrics file is empty: {path}")
 
-    numeric_cols = [
-        "elapsed_seconds",
-        "load_rate",
-        "throughput",
-        "latency",
-        "cpu",
-        "memory",
-        "kafka_lag",
-        "recovery_time",
-    ]
-    for col in numeric_cols:
+    for col in NUMERIC_COLS:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
     return df
 
 
+# --------------------------------------------------------------------- implementasi kanonik
+def load_canonical():
+    """Impor analysis_recovery_metrics.py sebagai satu-satunya definisi metrik."""
+    here = Path(__file__).resolve().parent
+    candidates = [
+        os.environ.get("RECOVERY_METRICS_PY"),
+        here / "analysis_recovery_metrics.py",
+        here / "scripts" / "analysis_recovery_metrics.py",
+        here.parent / "analysis_recovery_metrics.py",
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            spec = importlib.util.spec_from_file_location("analysis_recovery_metrics", candidate)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            return module
+    sys.exit(
+        "ERROR: analysis_recovery_metrics.py tidak ditemukan.\n"
+        "Taruh file itu di folder yang sama, atau set RECOVERY_METRICS_PY ke lokasinya.\n"
+        "Sengaja tidak ada salinan cadangan: angka laporan harus datang dari satu sumber."
+    )
+
+
+def _rows_from_df(df: pd.DataFrame) -> List[Dict[str, object]]:
+    """Ubah DataFrame menjadi bentuk baris yang dipakai modul kanonik."""
+    rows: List[Dict[str, object]] = []
+    for record in df.to_dict("records"):
+        try:
+            t = float(record["elapsed_seconds"])
+            load = float(record["load_rate"])
+            tp = float(record["throughput"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not (math.isfinite(t) and math.isfinite(load) and math.isfinite(tp)):
+            continue
+        mem: Optional[float]
+        try:
+            mem = float(record["memory"])
+            if not math.isfinite(mem):
+                mem = None
+        except (KeyError, TypeError, ValueError):
+            mem = None
+        rows.append({"t": t, "load": load, "tp": tp, "mem": mem})
+    rows.sort(key=lambda item: item["t"])
+    return rows
+
+
 def read_fault_start(default: float = 300.0) -> float:
+    """Waktu injeksi dari config/fault.yaml. Dipakai kalau --fault-time tidak diberikan."""
     fault_yaml = Path(__file__).resolve().parent.parent / "config" / "fault.yaml"
     if not fault_yaml.exists():
         return default
@@ -49,199 +130,160 @@ def read_fault_start(default: float = 300.0) -> float:
         faults = content.get("cascading_faults", [])
         if faults and isinstance(faults[0], dict):
             return float(faults[0].get("time", default))
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001 - jangan gagal senyap
+        print(f"warning: gagal membaca {fault_yaml} ({exc}); memakai default {default} s",
+              file=sys.stderr)
 
     return default
 
 
-def compute_recovery_interval(df: pd.DataFrame) -> float:
-    """Unified recovery definition used across reports.
+def compute_metrics(df: pd.DataFrame, fault_time: float, t2_min: Optional[float],
+                    canonical) -> Dict[str, Dict[str, float]]:
+    rows = canonical.dedup(_rows_from_df(df))
+    if not rows:
+        raise ValueError("Tidak ada baris valid (elapsed_seconds/load_rate/throughput).")
 
-    T1: throughput drops below 50% of the baseline.
-    T2: throughput is at least 90% of the baseline for 5 consecutive samples.
-    """
-    if "throughput" not in df.columns or df.empty:
-        return 0.0
+    # (i) jendela pelapor-mati dari footprint memori, dibatasi jadwal injeksi.
+    #     Ini yang dipakai untuk MENOLKAN throughput di deficit -- sama seperti skrip kanonik.
+    win = canonical.unmeasurable_window(rows, fault_time)
 
-    tp = pd.to_numeric(df["throughput"], errors="coerce").replace(0, pd.NA)
-    baseline = float(tp.dropna().head(10).mean()) if tp.dropna().size else 0.0
-    if not pd.notna(baseline) or baseline <= 0:
-        return 0.0
+    # (ii) semua metrik -- dari implementasi kanonik, tidak ada salinan lokal
+    breakdown = canonical.recovery_breakdown(rows, fault_time, t2_min)
+    deficit_pct = canonical.deficit(rows, win)
+    backlog_run = canonical.peak_backlog_rate(rows, win)
+    backlog_fault = canonical.peak_backlog_rate(rows, win or None, fault_time, fault_time + 60.0)
+    peak_mem = canonical.peak_memory(rows)
 
-    t1_candidates = tp.index[tp < 0.5 * baseline].tolist()
-    if not t1_candidates:
-        return 0.0
+    # (iii) statistik deskriptif yang tidak ada di kanonik
+    mem_values = [row["mem"] for row in rows if row["mem"] is not None]
+    latency_values = ([float(v) for v in df["latency"].dropna()] if "latency" in df.columns else [])
+    latency_nonzero = [v for v in latency_values if v > 0]
+    cpu_values = ([float(v) for v in df["cpu"].dropna()] if "cpu" in df.columns else [])
+    lag_values = ([float(v) for v in df["kafka_lag"].dropna()] if "kafka_lag" in df.columns else [])
 
-    t1_idx = t1_candidates[0]
-    for idx in range(t1_idx, max(0, len(df) - 4)):
-        window = tp.iloc[idx:idx + 5]
-        if window.size < 5:
-            break
-        if (window >= 0.9 * baseline).all():
-            t2_idx = idx + 4
-            t1_time = float(df.iloc[t1_idx]["elapsed_seconds"])
-            t2_time = float(df.iloc[t2_idx]["elapsed_seconds"])
-            duration = t2_time - t1_time
-            if duration >= 0:
-                return duration
-    return 0.0
+    tp_values = [row["tp"] for row in rows]
+    total_in = sum(row["load"] for row in rows)
+    total_out = sum(tp_values)
 
-
-def compute_throughput_deficit(df: pd.DataFrame) -> float:
-    """Throughput deficit = 1 - total_out / total_in."""
-    if "dt" not in df.columns:
-        df = df.copy()
-        df["dt"] = df["elapsed_seconds"].diff().fillna(1.0)
-
-    total_in = float((df["load_rate"] * df["dt"]).sum()) if "load_rate" in df.columns else 0.0
-    total_out = float((df["throughput"] * df["dt"]).sum()) if "throughput" in df.columns else 0.0
-    if total_in <= 0:
-        return 0.0
-    return max(0.0, 1.0 - (total_out / total_in))
-
-
-def compute_metrics(df: pd.DataFrame) -> Dict[str, Dict[str, float]]:
-    df_lat = df[df["latency"] > 0] if "latency" in df.columns else df
-    if df_lat.empty:
-        df_lat = df
-
-    lat_avg = float(df_lat["latency"].mean()) if "latency" in df_lat else 0.0
-    lat_peak = float(df_lat["latency"].max()) if "latency" in df_lat else 0.0
-    tp_avg = float(df["throughput"].mean()) if "throughput" in df.columns else 0.0
-    tp_peak = float(df["throughput"].max()) if "throughput" in df.columns else 0.0
-    lag_max = float(df["kafka_lag"].max()) if "kafka_lag" in df.columns else 0.0
-    cpu_avg = float(df["cpu"].mean()) if "cpu" in df.columns else 0.0
-    mem_avg = float(df["memory"].mean()) if "memory" in df.columns else 0.0
-    recovery_duration = compute_recovery_interval(df)
-    throughput_deficit = compute_throughput_deficit(df) * 100
-
-    if "dt" not in df.columns:
-        df = df.copy()
-        df["dt"] = df["elapsed_seconds"].diff().fillna(1.0)
-
-    total_in = float((df["load_rate"] * df["dt"]).sum()) if {"load_rate", "dt"}.issubset(df.columns) else 0.0
-    total_out = float((df["throughput"] * df["dt"]).sum()) if {"throughput", "dt"}.issubset(df.columns) else 0.0
-    final_lag = float(df["kafka_lag"].iloc[-1]) if "kafka_lag" in df.columns else 0.0
-    committed_output_events = total_out + final_lag
-
-    if total_in > 0 and total_in > committed_output_events:
-        data_loss = total_in - committed_output_events
-        loss_pct = (data_loss / total_in) * 100
-        duplicates = 0.0
-        duplicate_pct = 0.0
-        duplicate_source = "None"
-        correctness = "Data loss detected after backlog stabilization."
-    elif total_in > 0 and committed_output_events > total_in:
-        data_loss = 0.0
-        loss_pct = 0.0
-        duplicates = committed_output_events - total_in
-        duplicate_pct = (duplicates / total_in) * 100
-        duplicate_source = (
-            "Observed duplicates may include repetitive traffic patterns and transient recovery replay."
-        )
-        correctness = "No permanent loss detected; surplus likely reflects transient replay behavior."
-    else:
-        data_loss = 0.0
-        loss_pct = 0.0
-        duplicates = 0.0
-        duplicate_pct = 0.0
-        duplicate_source = "None"
-        correctness = "Input/output balance indicates no measurable permanent loss or replay surplus."
+    # (iv) neraca event hanyalah PERKIRAAN dari kolom throughput, bukan pengukuran kehilangan
+    missing_events = max(total_in - total_out, 0.0)
+    balance_pct = (missing_events / total_in * 100.0) if total_in > 0 else 0.0
 
     return {
-        "Throughput": {"average": tp_avg, "peak": tp_peak},
-        "Latency": {"average": lat_avg, "peak": lat_peak},
-        "Backpressure": {"max_lag": lag_max},
-        "Resource": {"cpu_avg": cpu_avg, "mem_avg": mem_avg},
-        "Recovery": {"recovery_duration": recovery_duration},
-        "Correctness": {
-            "duplicates": int(round(duplicates)),
-            "duplicate_percentage": duplicate_pct,
-            "duplicate_source": duplicate_source,
-            "correctness_assessment": correctness,
+        "Throughput": {"average": mean(tp_values), "peak": max(tp_values)},
+        "Latency": {
+            "average": mean(latency_nonzero) if latency_nonzero else 0.0,
+            "peak": max(latency_values) if latency_values else 0.0,
         },
+        "Backpressure": {
+            "max_lag_raw": max(lag_values) if lag_values else 0.0,
+            "peak_backlog_run": backlog_run,
+            "peak_backlog_fault_window": backlog_fault,
+        },
+        "Resource": {
+            "cpu_avg": mean(cpu_values) if cpu_values else 0.0,
+            "mem_avg_mb": mean(mem_values) if mem_values else 0.0,
+            "mem_peak_mb": peak_mem if peak_mem is not None else 0.0,
+        },
+        "Recovery": {
+            "fault_time": fault_time,
+            "t1": breakdown["t1"],
+            "t2": breakdown["t2"],
+            "interval": breakdown["interval"],
+            "unmeasurable_window": list(win) if win else None,
+        },
+        "Deficit": {"throughput_deficit_pct": deficit_pct},
         "DataLoss": {
-            "loss_percentage": max(loss_pct, throughput_deficit),
+            "loss_percentage": balance_pct,
             "total_input_events": int(round(total_in)),
             "total_output_events": int(round(total_out)),
-            "missing_events": int(round(data_loss)),
+            "missing_events": int(round(missing_events)),
         },
     }
 
 
 def write_engine_report(engine: str, metrics: Dict[str, Dict[str, float]], output: Path) -> None:
+    recovery = metrics["Recovery"]
+    interval = recovery["interval"]
+    interval_text = "tidak tercapai" if interval is None else "%.2f" % interval
+    t2_text = "tidak tercapai" if recovery["t2"] is None else "%.1f" % recovery["t2"]
+    window = recovery["unmeasurable_window"]
+    window_text = "tidak terdeteksi" if window is None else "[%.1f, %.1f] s" % (window[0], window[1])
+
     lines = [
-        f"# {engine} Experiment Report",
+        "# %s Experiment Report" % engine,
         "",
         "## Core Metrics",
         "",
-        f"- Throughput average: {metrics['Throughput']['average']:.2f} msg/s",
-        f"- Throughput peak: {metrics['Throughput']['peak']:.2f} msg/s",
-        f"- Latency average: {metrics['Latency']['average']:.2f} ms",
-        f"- Latency peak: {metrics['Latency']['peak']:.2f} ms",
-        f"- Max Kafka lag: {metrics['Backpressure']['max_lag']:.2f}",
-        f"- CPU average: {metrics['Resource']['cpu_avg']:.2f}%",
-        f"- Memory average: {metrics['Resource']['mem_avg']:.2f}%",
+        "- Throughput average: %.2f msg/s" % metrics["Throughput"]["average"],
+        "- Throughput peak: %.2f msg/s" % metrics["Throughput"]["peak"],
+        "- Latency average (non-zero samples): %.2f ms" % metrics["Latency"]["average"],
+        "- Latency peak (whole run, includes warm-up): %.2f ms" % metrics["Latency"]["peak"],
+        "- CPU average: %.2f%%" % metrics["Resource"]["cpu_avg"],
+        "- Memory average: %.2f MB" % metrics["Resource"]["mem_avg_mb"],
+        "- Memory peak: %.2f MB" % metrics["Resource"]["mem_peak_mb"],
+        "- Peak backlog (whole run): %.2f msg/s" % metrics["Backpressure"]["peak_backlog_run"],
+        "- Peak backlog (fault window): %.2f msg/s" % metrics["Backpressure"]["peak_backlog_fault_window"],
+        "- Raw kafka_lag column maximum: %.2f (collector column, NOT validated as backlog)"
+        % metrics["Backpressure"]["max_lag_raw"],
         "",
-        "## Recovery and Correctness",
+        "## Recovery",
         "",
-        f"- Threshold-based stabilization interval: {metrics['Recovery']['recovery_duration']:.2f} s",
-        f"- Data loss: {metrics['DataLoss']['loss_percentage']:.2f}%",
-        f"- Duplicate percentage: {metrics['Correctness']['duplicate_percentage']:.2f}%",
-        f"- Correctness note: {metrics['Correctness']['correctness_assessment']}",
+        "- Fault injected at: %.1f s" % recovery["fault_time"],
+        "- Reporter-down window: %s" % window_text,
+        "- T1: %.1f s" % recovery["t1"],
+        "- T2: %s" % t2_text,
+        "- Stabilization interval (T2 - T1): %s s" % interval_text,
+        "- Throughput deficit (whole run): %.2f%%" % metrics["Deficit"]["throughput_deficit_pct"],
+        "",
+        "## Event Balance (estimate from the throughput column, NOT a loss measurement)",
+        "",
+        "- Input events (integral of load_rate): %d" % metrics["DataLoss"]["total_input_events"],
+        "- Output events (integral of throughput): %d" % metrics["DataLoss"]["total_output_events"],
+        "- Difference: %d (%.2f%%)" % (metrics["DataLoss"]["missing_events"],
+                                      metrics["DataLoss"]["loss_percentage"]),
+        "- Note: the throughput deficit already contains a supply-side component and the",
+        "  first-60-s warm-up, so this difference is NOT a data-loss claim.",
     ]
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def build_comparison(analysis: Dict[str, Dict[str, Dict[str, float]]]) -> List[Dict[str, float | str]]:
-    rows: List[Dict[str, float | str]] = []
+def build_comparison(analysis: Dict[str, Dict[str, Dict[str, float]]]) -> List[Dict[str, object]]:
     metrics_to_compare = [
-        ("Throughput (Avg)", "Throughput", "average", True),
-        ("Throughput (Peak)", "Throughput", "peak", True),
-        ("Latency (Avg)", "Latency", "average", False),
-        ("Latency (Peak)", "Latency", "peak", False),
-        ("Kafka Lag (Max)", "Backpressure", "max_lag", False),
-        ("CPU Usage (Avg)", "Resource", "cpu_avg", False),
-        ("Memory Usage (Avg)", "Resource", "mem_avg", False),
-        ("Stabilization Interval (s)", "Recovery", "recovery_duration", False),
-        ("Data Loss (%)", "DataLoss", "loss_percentage", False),
-        ("Duplicate Events (%)", "Correctness", "duplicate_percentage", False),
+        ("Throughput (Avg)", "Throughput", "average"),
+        ("Throughput (Peak)", "Throughput", "peak"),
+        ("Stabilization Interval (s)", "Recovery", "interval"),
+        ("Throughput Deficit (%)", "Deficit", "throughput_deficit_pct"),
+        ("Peak Backlog (msg/s)", "Backpressure", "peak_backlog_run"),
+        ("Peak Memory (MB)", "Resource", "mem_peak_mb"),
+        ("CPU Usage (Avg, %)", "Resource", "cpu_avg"),
     ]
 
-    for name, cat, key, higher_is_better in metrics_to_compare:
-        f_val = float(analysis["Flink"][cat].get(key, 0.0))
-        s_val = float(analysis["Spark"][cat].get(key, 0.0))
-
-        if f_val == s_val:
-            better = "Tie"
-        elif higher_is_better:
-            better = "Flink" if f_val > s_val else "Spark"
-        else:
-            better = "Flink" if f_val < s_val else "Spark"
-
+    rows: List[Dict[str, object]] = []
+    for name, category, key in metrics_to_compare:
+        flink_value = analysis["Flink"][category].get(key)
+        spark_value = analysis["Spark"][category].get(key)
         rows.append({
             "Metric": name,
-            "Flink": round(f_val, 2),
-            "Spark": round(s_val, 2),
-            "Better": better,
+            "Flink": "" if flink_value is None else round(float(flink_value), 2),
+            "Spark": "" if spark_value is None else round(float(spark_value), 2),
         })
-
     return rows
 
 
-def write_comparison_report(comparison: List[Dict[str, float | str]], output: Path) -> None:
+def write_comparison_report(comparison: List[Dict[str, object]], output: Path) -> None:
     lines = [
-        "# Flink vs Spark Comparison",
+        "# Flink and Spark Comparison",
         "",
-        "| Metric | Flink | Spark | Better |",
-        "|---|---:|---:|---|",
+        "| Metric | Flink | Spark |",
+        "|---|---:|---:|",
     ]
     for row in comparison:
-        lines.append(f"| {row['Metric']} | {row['Flink']} | {row['Spark']} | {row['Better']} |")
+        lines.append("| %s | %s | %s |" % (row["Metric"], row["Flink"], row["Spark"]))
     lines.append("")
-    lines.append("Comparisons are descriptive and depend on configuration, telemetry coverage, and threshold definitions.")
+    lines.append("Descriptive only. Resource-constrained single-node setup, n = 3 per group, so the")
+    lines.append("numbers are reported as consistency evidence rather than a significance test.")
 
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -254,14 +296,31 @@ def main() -> None:
     parser.add_argument("--flink-report", required=True)
     parser.add_argument("--spark-report", required=True)
     parser.add_argument("--comparison-report", required=True)
+    parser.add_argument("--fault-time", type=float, default=None,
+                        help="fault injection time in seconds (default: config/fault.yaml)")
+    parser.add_argument("--scenario", choices=["single", "central", "multi"], default=None,
+                        help="skenario dari tabel kanonik; menentukan T2 minimum "
+                             "(central: T2 dihitung dari t=180 s, seperti aturan jadwal di naskah)")
     args = parser.parse_args()
+
+    canonical = load_canonical()
+
+    t2_min: Optional[float] = None
+    if args.scenario:
+        default_fault, t2_min = canonical.SCENARIOS[args.scenario]
+        fault_time = default_fault if args.fault_time is None else float(args.fault_time)
+    elif args.fault_time is not None:
+        fault_time = float(args.fault_time)
+    else:
+        fault_time = read_fault_start()
+        print("fault time from config/fault.yaml: %.1f s" % fault_time, file=sys.stderr)
 
     flink_df = load_metrics(Path(args.flink_metrics))
     spark_df = load_metrics(Path(args.spark_metrics))
 
     analysis = {
-        "Flink": compute_metrics(flink_df),
-        "Spark": compute_metrics(spark_df),
+        "Flink": compute_metrics(flink_df, fault_time, t2_min, canonical),
+        "Spark": compute_metrics(spark_df, fault_time, t2_min, canonical),
     }
     comparison = build_comparison(analysis)
 
@@ -272,15 +331,16 @@ def main() -> None:
     summary_path = Path(args.comparison_report).parent / "experiment_summary.json"
     summary_payload = {
         "timestamp": datetime.now().isoformat(),
+        "fault_time": fault_time,
         "analysis": analysis,
         "comparison": comparison,
     }
     summary_path.write_text(json.dumps(summary_payload, indent=2), encoding="utf-8")
 
-    print(f"Saved {args.flink_report}")
-    print(f"Saved {args.spark_report}")
-    print(f"Saved {args.comparison_report}")
-    print(f"Saved {summary_path}")
+    print("Saved %s" % args.flink_report)
+    print("Saved %s" % args.spark_report)
+    print("Saved %s" % args.comparison_report)
+    print("Saved %s" % summary_path)
 
 
 if __name__ == "__main__":

@@ -95,7 +95,7 @@ services:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
       GF_PATHS_PROVISIONING: /etc/grafana/provisioning
-      GF_INSTALL_PLUGINS: grafana-piechart-panel
+
     volumes:
       - grafana-spark-data:/var/lib/grafana
       - ./grafana-provisioning:/etc/grafana/provisioning:ro

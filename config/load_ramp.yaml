@@ -1,0 +1,43 @@
+# Load profile untuk skenario SINGLE-NODE & CENTRAL component failure.
+# Ramp monotonik 100 -> 1000 (10 stage x 60s = 600s total).
+# Fault terjadi di t=120 (single: kill worker permanen; central: kill jobmanager -> restart t=180).
+load_pattern:
+  - rate: 100
+    duration: 60
+    description: "Stage 1 (baseline)"
+  - rate: 200
+    duration: 60
+    description: "Stage 2"
+  - rate: 300
+    duration: 60
+    description: "Stage 3 (fault t=120 jatuh di stage ini)"
+  - rate: 400
+    duration: 60
+    description: "Stage 4"
+  - rate: 500
+    duration: 60
+    description: "Stage 5"
+  - rate: 600
+    duration: 60
+    description: "Stage 6"
+  - rate: 700
+    duration: 60
+    description: "Stage 7"
+  - rate: 800
+    duration: 60
+    description: "Stage 8"
+  - rate: 900
+    duration: 60
+    description: "Stage 9"
+  - rate: 1000
+    duration: 60
+    description: "Stage 10 (peak)"
+
+total_duration: 600
+replay_dataset: true
+dataset_source: "parquet"
+dataset:
+  path: "../cic-collection.parquet"
+  replay_mode: "loop"
+  deterministic: true
+kafka_topic: "cic-topic"

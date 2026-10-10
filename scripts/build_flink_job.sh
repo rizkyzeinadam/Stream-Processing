@@ -1,8 +1,7 @@
 #!/bin/bash
 
-set -euo pipefail
-
-PROJECT_ROOT="/mnt/c/Users/Rizky Zein Adam/Documents/tesis/Thesis"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FLINK_JOB_DIR="${PROJECT_ROOT}/flink-jobs"
 
 cd "$FLINK_JOB_DIR"

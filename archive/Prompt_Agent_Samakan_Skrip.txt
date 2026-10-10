@@ -1,0 +1,111 @@
+============================================================
+PROMPT UNTUK AGENT (Cline / Claude) DI REPO LOKAL
+Tujuan: skrip metrik lokal menghasilkan angka yang PERSIS sama
+dengan Tabel 1 + Tabel 2 naskah TELKOMNIKA, walaupun struktur
+folder repo ini berbeda dari repo asal skrip.
+============================================================
+
+--- SALIN MULAI DARI SINI ---
+
+KONTEKS
+Repo ini adalah artefak eksperimen pembanding fault recovery Apache Flink dan
+Apache Spark Structured Streaming. Naskah jurnal melaporkan angka pada Tabel 1
+(recovery stabilization interval, throughput deficit, peak backlog) dan Tabel 2
+(peak memory). Angka itu dihitung dari 18 CSV mentah (3 skenario x 3 replikasi x
+2 framework).
+
+Masalahnya: di repo ini definisi metrik ditulis lebih dari satu kali dan saling
+berbeda, sehingga hasilnya tidak sama dengan Tabel 1. Tugasmu menyatukannya.
+
+TUGAS
+1. Temukan seluruh CSV hasil eksperimen di repo ini (pola nama
+   `<framework>_<skenario>_rep<N>.csv`, mis. flink_multi_rep1.csv,
+   spark_central_rep3.csv). Laporkan di mana saja letaknya.
+2. Pastikan HANYA ADA SATU implementasi metrik. File yang boleh memuat definisi
+   metrik adalah `analysis_recovery_metrics.py`. Semua skrip lain yang menghitung
+   recovery interval / deficit / backlog (mis. generate_report.py,
+   analyze_recovery_metrics.py, recovery_metrics.py, generate_publication_figures.py,
+   skrip chart apa pun) HARUS meng-import dari `analysis_recovery_metrics.py` dan
+   tidak boleh menyimpan salinan logikanya.
+3. Karena struktur folder repo ini mungkin berbeda, buat `analysis_recovery_metrics.py`
+   menemukan data secara otomatis (urutan prioritas):
+     a. argumen CLI `--data-dir`
+     b. variabel lingkungan `RECOVERY_DATA_DIR`
+     c. pencarian rekursif dari folder skrip untuk pola `<skenario>_3x/<framework>_*.csv`,
+        atau `<framework>_<skenario>_rep*.csv` di dalam folder `results/`, `data/`, atau `metrics/`
+   Cetak folder data yang akhirnya dipakai. JANGAN memakai path absolut yang di-hardcode.
+4. Jangan mengubah isi CSV, jangan mengubah satu angka pun di dokumen naskah.
+5. Jangan pernah mengarang angka. Kalau verifikasi gagal, laporkan apa adanya.
+
+DEFINISI METRIK (JANGAN DIUBAH — ini yang dipakai naskah)
+- Skenario dan waktu injeksi: single = 120 s, central = 120 s (komponen kembali 180 s),
+  multi = 330 s.
+- Pembacaan CSV: buang baris yang elapsed_seconds / load_rate / throughput bukan angka
+  berhingga (NaN/inf). Dedup per detik (int(round(elapsed_seconds))), urut menaik.
+  Kolom memory: kalau NaN, anggap sampel hilang, bukan nol. Kolom wajib divalidasi sekali
+  di awal; kalau ada yang hilang, berhenti dengan pesan jelas.
+- Baseline: rata-rata throughput pada jendela [fault - 60 s, fault).
+- T1: sampel pertama dengan elapsed >= fault yang throughput-nya < 0,5 x baseline.
+  Kalau seri tidak pernah turun sedalam itu, T1 = waktu injeksi.
+- T2: sampel pertama dari 5 sampel berturut-turut dengan throughput >= 0,9 x beban yang
+  berlaku saat injeksi. T2 dihitung DARI AKHIR jendela fault aktif, yaitu max(fault, t2_min)
+  dengan t2_min = 180 s untuk skenario central dan None untuk lainnya.
+- Interval recovery = T2 - T1 (detik). Kalau T2 tidak tercapai, interval = tidak ada.
+- Throughput deficit = 1 - (integral throughput) / (integral beban) sepanjang run, dalam persen.
+  Sampel selama jendela pelapor-mati (skenario central, t = 120-180 s) dihitung sebagai
+  throughput NOL. Celah koleksi (selisih antar sampel > 30 s) dihitung sebagai dt = 1 s,
+  jangan diekstrapolasi.
+  Jendela pelapor-mati dideteksi dari footprint memori: kalau ada sampel di [fault, fault + 60 s]
+  dengan memory < 0,5 x rata-rata memory 60 s pra-fault, maka jendelanya = [fault, fault + 60 s].
+- Peak backlog rate = max(beban - throughput, 0) dalam msg/s. Laporkan untuk seluruh run.
+- Peak memory = max(memory) per run (MB).
+- Pembulatan: setengah-ke-atas (ROUND_HALF_UP) pada digit terakhir yang ditampilkan.
+  Simpangan baku = simpangan baku SAMPEL (ddof = 1), bukan populasi.
+  Rata-rata dan SD dihitung dari nilai per-run yang BELUM dibulatkan.
+  Contoh: nilai 22,750 dibulatkan ke 1 desimal menjadi 22,8 (bukan 22,7).
+
+TARGET YANG HARUS DICAPAI (angka naskah, jangan diubah)
+skenario  framework  interval (s)        per run         deficit (%)     backlog  peak mem (MB)
+multi     flink      50.0 +- 4.8        52.5/52.8/44.5   9.18 +- 1.45      841    1391 +- 24
+multi     spark      35.3 +- 11.4       47.5/33.5/25.0   8.11 +- 0.74      439    3914 +- 139
+single    flink      37.7 +- 2.4        40.5/36.3/36.3  10.59 +- 1.28      275    1233 +- 8
+single    spark      27.5 +- 9.9        22.7/38.9/20.9   8.11 +- 1.66      297    2826 +- 29
+central   flink      68.6 +- 1.2        69.5/67.2/69.0  16.19 +- 2.61      190    1233 +- 1
+central   spark      68.4 +- 1.8        67.9/66.9/70.4  19.35 +- 1.43      300    2567 +- 164
+
+CARA VERIFIKASI (WAJIB DIJALANKAN, JANGAN DIKLAIM SAJA)
+Jalankan:
+    python analysis_recovery_metrics.py --check
+Lalu:
+    python analysis_recovery_metrics.py --data-dir <folder yang kamu temukan> --check
+
+Yang harus muncul: baris demi baris "OK" untuk keenam kombinasi skenario/framework
+pada interval, deficit, backlog, dan peak memory, diakhiri "hasil: SEMUA COCOK".
+
+Uji juga jalur gagal: jalankan skrip dari folder yang tidak punya akses ke CSV,
+dan pastikan skrip BERHENTI dengan pesan jelas (bukan mencetak angka kosong atau nol).
+
+LAPORAN YANG AKU MAU (tulis di akhir)
+1. Lokasi CSV yang kamu temukan (path lengkap).
+2. Daftar file yang kamu ubah, dan untuk tiap file: satu kalimat apa yang diubah.
+3. Daftar file yang kamu pindahkan ke `legacy/` (kalau ada) beserta alasannya.
+4. Tempel keluaran mentah perintah verifikasi APA ADANYA (jangan diringkas, jangan
+   diperbaiki). Kalau ada yang BEDA, tunjukkan selisihnya dan jangan tutupi.
+5. Kalau ada langkah yang gagal atau tidak bisa kamu lakukan, bilang terus terang.
+
+YANG TIDAK BOLEH KAMU LAKUKAN
+- Menyimpan salinan kedua logika metrik di file lain.
+- Menambah angka "default" atau fallback diam-diam ketika data tidak ditemukan.
+- Mengubah CSV, mengubah dokumen naskah, atau menyesuaikan angka target agar cocok.
+- Menyatakan "sudah beres" tanpa menempelkan keluaran verifikasi yang sebenarnya.
+
+--- SALIN SAMPAI SINI ---
+
+CATATAN PENGGUNAAN
+1. Taruh dulu 4 file dari zip "Skrip_Metrik_dan_Gambar_untuk_Repo.zip" ke folder
+   yang sama di repo (analysis_recovery_metrics.py, generate_report.py,
+   make_fig1_scenarios.py, make_figs_print.py).
+2. Kalau file itu belum ada, agent boleh menulisnya dari definisi metrik di atas,
+   tapi hasilnya wajib lulus verifikasi.
+3. Tempel prompt ini ke Cline/Claude di repo lokal. Pastikan dia menempelkan
+   keluaran verifikasi mentah, bukan ringkasan buatannya sendiri.
