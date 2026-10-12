@@ -42,7 +42,7 @@ Seluruh metrik didefinisikan secara kanonik pada [`scripts/analysis_recovery_met
 
 ## 📊 Target Verifikasi Metrik (Tabel 1 & Tabel 2 Naskah)
 
-Semua angka dihitung langsung dari 18 file CSV mentah tanpa hardcoding:
+Semua angka dihitung langsung dari 18 file CSV :
 
 | Skenario | Framework | Recovery Interval (s) | Per Run (rep1/2/3) | Throughput Deficit (%) | Peak Backlog (msg/s) | Peak Memory (MB) |
 |:---|:---|:---:|:---:|:---:|:---:|:---:|
