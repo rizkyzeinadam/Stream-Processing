@@ -1,446 +1,181 @@
-# Stream Processing Fault Recovery Evaluation Framework
+# Evaluasi Fault Recovery: Apache Flink vs Apache Spark Structured Streaming
 
-A comprehensive experimental framework for evaluating fault recovery and cascading failure handling in Apache Flink and Apache Spark under dynamic load conditions.
+Kerangka kerja eksperimental komparatif dan artefak analisis data untuk evaluasi *fault recovery* pada mesin pemrosesan data terdistribusi (**Apache Flink** dan **Apache Spark Structured Streaming**) di bawah beban dinamis dan skenario kegagalan bertingkat (*cascading faults*).
 
-## 📋 Overview
-
-This framework implements thesis-compliant synchronized experiments that evaluate how stream processing systems handle:
-
-- **Dynamic Load Patterns**: Progressive load changes simulating real-world scenarios
-- **Cascading Failures**: Sequential faults triggering system recovery mechanisms
-- **Performance Metrics**: Real-time monitoring of throughput, latency, resource usage, and recovery time
-- **Reproducibility**: YAML-based configuration ensures identical conditions for both systems
-
-### Key Features
-
-✅ **Synchronized Experiments**: Both Flink and Spark run with identical load patterns and fault timelines
-✅ **1-Second Metrics**: Fine-grained performance data collection
-✅ **Configuration-Driven**: Fully parameterized via YAML files
-✅ **Automated Orchestration**: Single command to run complete experiment suite
-✅ **Comprehensive Analysis**: Scoring system and comparison metrics
-✅ **Reproducible Results**: All experiment parameters stored and logged
-
-## 📁 Directory Structure
-
-```
-Percobaan Tesis/
-├── docker-compose/          # Docker Compose configurations
-│   ├── docker-compose-flink.yml
-│   ├── docker-compose-spark.yml
-│   ├── prometheus-flink.yml
-│   ├── prometheus-spark.yml
-│   └── flink-conf.yaml
-├── scripts/                 # Experiment automation scripts
-│   ├── run_experiment.sh    # Main orchestration script
-│   ├── producer.py          # Dynamic load generator
-│   ├── fault_injection.sh   # Fault injection controller
-│   ├── metrics_collector.py # Prometheus metrics collector
-│   └── generate_report.py   # Report and analysis generator
-├── config/                  # Experiment configuration
-│   ├── load.yaml           # Dynamic load patterns
-│   ├── fault.yaml          # Cascading fault timeline
-│   ├── monitoring.yaml     # Metrics collection settings
-│   └── flink-conf.yaml
-├── metrics/                # Collected metrics (CSV files)
-│   ├── flink_metrics.csv
-│   └── spark_metrics.csv
-└── results/               # Generated reports
-    ├── flink_results.md
-    ├── spark_results.md
-    └── comparison.md
-```
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-- Docker & Docker Compose
-- Python 3.7+
-- Required Python packages: `kafka-python`, `pyyaml`, `requests`
-
-### Installation
-
-```bash
-# Install Python dependencies
-pip3 install kafka-python pyyaml requests
-
-# Navigate to project directory
-cd /Users/rizkyzeinadam/Documents/Percobaan\ Tesis
-
-# Make scripts executable
-chmod +x scripts/*.sh
-chmod +x scripts/*.py
-```
-
-### Running Experiments
-
-```bash
-# Run both experiments (recommended)
-bash scripts/run_experiment.sh both
-
-# Or run individual systems
-bash scripts/run_experiment.sh flink
-bash scripts/run_experiment.sh spark
-```
-
-## ⚙️ Configuration Files
-
-### load.yaml - Dynamic Load Pattern
-
-Defines the message rate timeline for the experiment:
-
-```yaml
-load_pattern:
-  - rate: 100        # 100 msg/sec
-    duration: 30     # for 30 seconds
-    description: "Baseline load"
-  - rate: 300
-    duration: 30
-    description: "Increasing load"
-  - rate: 700
-    duration: 30
-    description: "High load"
-  - rate: 1000
-    duration: 5
-    description: "Burst load peak"
-  - rate: 200
-    duration: 25
-    description: "Recovery phase"
-
-total_duration: 120  # Total experiment duration
-```
-
-### fault.yaml - Cascading Fault Timeline
-
-Defines the sequence of faults injected during the experiment:
-
-```yaml
-cascading_faults:
-  - time: 60
-    action: "kill_worker"          # Kill primary worker
-    target: "worker1"
-  - time: 65
-    action: "burst_load"           # Simultaneous burst load
-  - time: 70
-    action: "network_delay"        # Add 100ms latency
-    target: "worker2"
-    delay_ms: 100
-  - time: 75
-    action: "restart_node"         # Restart killed worker
-    target: "worker1"
-  - time: 80
-    action: "packet_loss"          # Inject packet loss (cascade)
-    target: "kafka"
-    loss_percentage: 5
-  - time: 90
-    action: "clear_faults"         # Remove network faults
-```
-
-### monitoring.yaml - Metrics Configuration
-
-Specifies which metrics to collect and how frequently:
-
-```yaml
-metrics_collection:
-  interval: 1        # Collect every 1 second
-  prometheus_url: "http://localhost:9090"
-  
-  metrics:
-    - name: "throughput"
-      unit: "msg/s"
-    - name: "latency"
-      unit: "ms"
-    - name: "cpu"
-      unit: "%"
-    - name: "memory"
-      unit: "%"
-    - name: "kafka_lag"
-      unit: "messages"
-```
-
-## 📊 Experiment Flow
-
-### Sequential Execution
-
-1. **Setup Phase** (Automatic)
-   - Create Docker containers
-   - Wait for service startup (30s)
-   - Copy configuration files
-
-2. **Flink Experiment** (~130s)
-   ```
-   ├─ Start Flink JobManager + 2 TaskManagers
-   ├─ Start Metrics Collection (every 1s)
-   ├─ Start Fault Injection (at predefined times)
-   ├─ Run Producer (dynamic load from load.yaml)
-   └─ Stop & Save Metrics
-   ```
-
-3. **Spark Experiment** (~130s) - IDENTICAL CONDITIONS
-   ```
-   ├─ Stop Flink Containers
-   ├─ Start Spark Master + 2 Workers
-   ├─ Start Metrics Collection (same 1s interval)
-   ├─ Start Fault Injection (SAME timeline)
-   ├─ Run Producer (SAME load pattern)
-   └─ Stop & Save Metrics
-   ```
-
-4. **Report Generation**
-   - Compare metrics
-   - Calculate scores
-   - Generate Markdown reports
-
-## 📈 Metrics Collected
-
-### Per-Second Metrics
-
-| Metric | Unit | Source | Description |
-|--------|------|--------|-------------|
-| `throughput` | msg/s | Kafka | Messages processed per second |
-| `latency` | ms | Task Manager/Worker | End-to-end processing latency |
-| `cpu` | % | Node Exporter | CPU utilization |
-| `memory` | % | Node Exporter | Memory utilization |
-| `kafka_lag` | messages | Prometheus | Consumer lag (backlog) |
-| `recovery_time` | seconds | Derived | Time to recover from fault |
-
-### Output Format (CSV)
-
-```csv
-timestamp,elapsed_seconds,load_rate,throughput,latency,cpu,memory,kafka_lag,recovery_time
-2024-04-09T10:30:00,0,100,95.2,12.5,15.3,42.1,0,0.0
-2024-04-09T10:30:01,1,100,98.7,13.1,16.1,42.5,5,0.0
-...
-```
-
-## 📄 Report Output
-
-### flink_results.md
-
-Comprehensive Flink experiment analysis including:
-- Experiment setup details
-- Dynamic load pattern summary
-- Cascading fault timeline
-- Performance metrics tables
-- Recovery time analysis
-- System stability assessment
-- Peak values and conclusions
-
-### spark_results.md
-
-Identical structure to Flink report for direct comparison.
-
-### comparison.md
-
-Comparative analysis with:
-- **Recovery Time Comparison**: Direct measurement & scoring
-- **Throughput Consistency**: Stability during faults
-- **Latency Spike Analysis**: Peak latency and recovery
-- **System Stability Scoring**: Weighted metric evaluation
-- **Category Winners**: Which system excels in each area
-- **Overall Ranking**: Final scored comparison
-
-#### Scoring Metrics
-
-```
-Recovery Time Score:
-- Lower recovery = Higher score (0-100)
-- Baseline normalized to 30s maximum
-
-Throughput Consistency:
-- Lower std deviation = Higher score
-- Measures stability during fault window
-
-Latency Spike Score:
-- Lower peak latency = Higher score
-- Percentage of baseline increase
-
-System Stability:
-- Weighted average of three factors
-- Throughput consistency: 40%
-- Latency stability: 40%
-- CPU efficiency: 20%
-```
-
-## 🔧 Advanced Usage
-
-### Custom Load Pattern
-
-Edit `config/load.yaml` to define custom rate timeline:
-
-```yaml
-load_pattern:
-  - rate: 500
-    duration: 60
-  - rate: 1500
-    duration: 30
-  - rate: 100
-    duration: 30
-```
-
-Then run:
-```bash
-bash scripts/run_experiment.sh both
-```
-
-### Custom Fault Injection
-
-Edit `config/fault.yaml` to change fault sequence:
-
-```yaml
-cascading_faults:
-  - time: 30
-    action: "kill_worker"
-    target: "worker1"
-  - time: 40
-    action: "network_delay"
-    target: "worker2"
-    delay_ms: 500
-```
-
-### Manual Metrics Collection
-
-Collect metrics separately without full experiment:
-
-```bash
-python3 scripts/metrics_collector.py \
-  --prometheus "http://localhost:9090" \
-  --output metrics/manual_metrics.csv \
-  --duration 60 \
-  --interval 1
-```
-
-### Manual Report Generation
-
-Generate reports from existing CSV files:
-
-```bash
-python3 scripts/generate_report.py \
-  --flink-metrics metrics/flink_metrics.csv \
-  --spark-metrics metrics/spark_metrics.csv \
-  --flink-report results/flink_custom.md \
-  --spark-report results/spark_custom.md \
-  --comparison-report results/comparison_custom.md
-```
-
-## 🔍 Monitoring Dashboards
-
-While experiments run, access:
-
-- **Flink WebUI**: http://localhost:8083
-- **Spark WebUI**: http://localhost:8080
-- **Prometheus**: http://localhost:9090
-- **Grafana**: http://localhost:3000 (admin/admin)
-
-## 🐛 Troubleshooting
-
-### Containers won't start
-```bash
-# Check Docker daemon
-docker ps
-
-# Free up ports
-docker-compose -f docker-compose-flink.yml down -v
-docker-compose -f docker-compose-spark.yml down -v
-```
-
-### Metrics not collecting
-```bash
-# Verify Prometheus is accessible
-curl http://localhost:9090/api/v1/status
-
-# Check metrics_collector logs
-tail -f /tmp/metrics_collector.log
-```
-
-### Fault injection timing issues
-```bash
-# Check fault injection log
-tail -f /tmp/fault_injection.log
-
-# Verify container names
-docker ps
-```
-
-### Producer not sending messages
-```bash
-# Check producer log
-tail -f /tmp/producer.log
-
-# Verify Kafka is accessible
-docker exec flink-kafka kafka-topics --list --bootstrap-server localhost:29092
-```
-
-## 📝 Log Files
-
-All major components generate logs:
-
-| Component | Log File |
-|-----------|----------|
-| Producer | `/tmp/producer.log` |
-| Fault Injection | `/tmp/fault_injection.log` |
-| Metrics Collection | `/tmp/metrics_collector.log` |
-
-## ✅ Experiment Validation Checklist
-
-Before running experiments:
-
-- [ ] Docker & Docker Compose installed
-- [ ] Python 3.7+ with required packages
-- [ ] All configuration files present in `config/`
-- [ ] Scripts have execute permissions
-- [ ] No containers running on ports 2181, 9092, 3000, 8080-8082
-
-## 📚 References
-
-### Configuration Parameters
-
-- **Load Pattern**: Configurable in `config/load.yaml`
-- **Fault Timeline**: Configurable in `config/fault.yaml`
-- **Metrics Interval**: Set to 1 second (fine-grained data collection)
-- **Experiment Duration**: 120s load + 10s margin = 130s total
-
-### Performance Benchmarks
-
-Expected metrics ranges:
-
-| Metric | Typical Range |
-|--------|---------------|
-| Throughput | 100-1000 msg/s |
-| Latency | 10-50 ms |
-| CPU | 20-80% |
-| Memory | 30-60% |
-| Recovery Time | 5-15 seconds |
-
-## 🎯 Key Design Decisions
-
-1. **1-Second Metrics**: Captures detailed behavior during faults
-2. **YAML Configuration**: Ensures reproducibility
-3. **Sequential Execution**: Prevents resource contention
-4. **Identical Conditions**: Fair comparison between systems
-5. **Automated Scoring**: Objective performance evaluation
-6. **Markdown Reports**: Version-control friendly documentation
-
-## 📞 Support
-
-For issues or questions about the framework:
-
-1. Check log files in `/tmp/`
-2. Verify configuration files match expected format
-3. Ensure Docker containers are running: `docker ps`
-4. Review metrics collected: Check CSV files in `metrics/`
-
-## 📜 License
-
-This experimental framework is for thesis research purposes.
-
-## 🙏 Acknowledgments
-
-Framework designed for thesis evaluation of stream processing fault recovery under cascading failures.
+Repository ini memuat seluruh pipeline dari eksekusi container Docker, injeksi kegagalan, perekaman telemetri per detik, hingga skrip pasca-pemrosesan data (*post-processing*) untuk menghasilkan angka Tabel 1 & 2 naskah jurnal (TELKOMNIKA) serta 14 grafik Gambar Bab 4 tesis.
 
 ---
 
-**Last Updated**: April 2024
-**Framework Version**: 1.0
-**Experiment Environment**: Synchronized, YAML-driven, thesis-compliant
-# Thesis
+## 📋 Ringkasan Eksperimen
+
+Eksperimen mengevaluasi ketahanan dan pemulihan kedua mesin pemrosesan terhadap 3 skenario kegagalan:
+
+1. **Multi-Fault Cascading (900 detik):**
+   - Beban dinamis bertingkat (*step load*) 100 → 1000 msg/s.
+   - Kegagalan beruntun: *switchover* Worker 2 ($t=300\text{ s}$), terminasi paksa (*kill*) Worker 1 ($t=330\text{ s}$), dan pemulihan kembali Worker 1 ($t=660\text{ s}$).
+2. **Single-Node Failure (600 detik):**
+   - Beban bertahap (*ramp load*) 100 → 1000 msg/s.
+   - Terminasi paksa 1 worker aktif pada $t=120\text{ s}$ (tanpa restart).
+3. **Central Component Failure (600 detik):**
+   - Beban bertahap (*ramp load*) 100 → 1000 msg/s.
+   - Terminasi komponen koordinator (JobManager Flink / Driver Spark) pada $t=120\text{ s}$ dan dihidupkan kembali pada $t=180\text{ s}$ (downtime 60 detik).
+
+Eksperimen dijalankan dengan **3 kali replikasi** untuk setiap skenario dan framework ($3 \times 3 \times 2 = 18\text{ run}$ independen) dengan prosedur sanitasi penuh (*stack reset*, re-create topic Kafka, penghapusan state/checkpoint) antar-replikasi untuk menghindari kontaminasi data.
+
+---
+
+## 🎯 7 Metrik Evaluasi (Bab 1 Tesis & Naskah)
+
+Seluruh metrik didefinisikan secara kanonik pada [`scripts/analysis_recovery_metrics.py`](scripts/analysis_recovery_metrics.py) sebagai satu-satunya sumber kebenaran (*single source of truth*):
+
+| No | Metrik Evaluasi | Satuan | Definisi & Penjelasan |
+|:---:|:---|:---:|:---|
+| **1** | **Throughput** | msg/s | Laju data output yang berhasil diproses per detik. Dilaporkan sebagai nilai rata-rata dan puncak. |
+| **2** | **Latency** | ms | Waktu latensi pemrosesan data end-to-end (rata-rata sampel non-nol & puncak). Dilaporkan sebagai karakteristik tren internal. |
+| **3** | **Backlog Proxy Rate** | msg/s | Laju penumpukan pesan antrean yang dihitung dari $\max(\text{beban} - \text{throughput}, 0)$ per detik (menggantikan raw Kafka lag untuk menghindari artefak restart Flink). |
+| **4** | **CPU Utilization** | % | Rata-rata persentase penggunaan CPU node/container selama pengujian berlangsung. |
+| **5** | **Memory Utilization** | MB | Penggunaan memori penampung tertinggi (*Peak Container Memory*) per run, dihitung rata-rata dan SD sampel (Tabel 2 naskah). |
+| **6** | **Recovery Stabilization Interval** | detik | Durasi $T_2 - T_1$ di mana:<br>- $T_1$: sampel pertama saat throughput jatuh $< 50\%$ dari baseline pra-fault (rata-rata 60 detik pra-injeksi).<br>- $T_2$: sampel pertama dari 5 sampel beruntun yang mencapai throughput $\ge 90\%$ beban injeksi, dihitung dari akhir jendela fault aktif (Tabel 1 naskah). |
+| **7** | **Throughput Deficit** | % | Persentase kapasitas beban yang hilang akibat kegagalan:<br>$1 - \frac{\int \text{throughput}\,dt}{\int \text{beban}\,dt} \times 100\%$<br>Sampel selama jendela pelapor mati (central failure) dihitung throughput 0. Celah data $> 30\text{ s}$ dijaga dengan $dt = 1\text{ s}$. |
+
+---
+
+## 📊 Target Verifikasi Metrik (Tabel 1 & Tabel 2 Naskah)
+
+Semua angka dihitung langsung dari 18 file CSV mentah tanpa hardcoding:
+
+| Skenario | Framework | Recovery Interval (s) | Per Run (rep1/2/3) | Throughput Deficit (%) | Peak Backlog (msg/s) | Peak Memory (MB) |
+|:---|:---|:---:|:---:|:---:|:---:|:---:|
+| **Multi-Fault** | **Flink** | **50.0 ± 4.8** | 52.5 / 52.8 / 44.5 | **9.18 ± 1.45** | 841 | 1391 ± 24 |
+| **Multi-Fault** | **Spark** | **35.3 ± 11.4** | 47.5 / 33.5 / 25.0 | **8.11 ± 0.74** | 439 | 3914 ± 139 |
+| **Single-Node** | **Flink** | **37.7 ± 2.4** | 40.5 / 36.3 / 36.3 | **10.59 ± 1.28** | 275 | 1233 ± 8 |
+| **Single-Node** | **Spark** | **27.5 ± 9.9** | 22.7 / 38.9 / 20.9 | **8.11 ± 1.66** | 297 | 2826 ± 29 |
+| **Central** | **Flink** | **68.6 ± 1.2** | 69.5 / 67.2 / 69.0 | **16.19 ± 2.61** | 190 | 1233 ± 1 |
+| **Central** | **Spark** | **68.4 ± 1.8** | 67.9 / 66.9 / 70.4 | **19.35 ± 1.43** | 300 | 2567 ± 164 |
+
+*Catatan: Pembulatan mengikuti kaidah ROUND_HALF_UP pada digit desimal terakhir; simpangan baku menggunakan SD sampel ($ddof=1$).*
+
+---
+
+## 📁 Struktur Direktori
+
+```
+Thesis/
+├── run_all_analysis.py          # Master CLI: jalankan seluruh post-processing sekali jalan
+├── README.md                    # Dokumentasi lengkap proyek
+├── requirements.txt             # Dependensi Python
+├── cic-collection.parquet       # Dataset sumber traffic jaringan (CIC-DDoS)
+│
+├── scripts/                     # Seluruh skrip eksekusi, analisis, dan visualisasi
+│   ├── analysis_recovery_metrics.py  # [Kanonik] Verifikasi metrik Tabel 1 & 2 naskah
+│   ├── generate_charts_bab4_3x.py   # Generator 14 grafik Gambar Bab 4 tesis
+│   ├── make_fig1_scenarios.py       # Generator Figure 1 naskah (Arsitektur, 300 DPI)
+│   ├── make_figs_print.py           # Generator Figure 2, 3, 4 naskah (Cetak, 300 DPI)
+│   ├── generate_report.py           # Generator laporan komparatif Markdown
+│   ├── generate_publication_figures.py # Generator pack gambar publikasi
+│   ├── run_all_replications.sh      # Master runner replikasi 3x (18 run)
+│   ├── run_experiment.sh            # Orkestrator eksperimen Flink & Spark
+│   ├── fault_injection.sh           # Pengontrol injeksi kegagalan
+│   ├── metrics_collector.py         # Pengumpul telemetri per detik
+│   └── producer.py                  # Generator beban sintetis ke Kafka
+│
+├── results/                     # Hasil CSV 18 run & figur naskah
+│   ├── flink_multi_rep[1-3].csv
+│   ├── spark_multi_rep[1-3].csv
+│   ├── flink_single_rep[1-3].csv
+│   ├── spark_single_rep[1-3].csv
+│   ├── flink_central_rep[1-3].csv
+│   ├── spark_central_rep[1-3].csv
+│   └── figs_print/              # Gambar cetak naskah 300 DPI (Figure 1, 2, 3, 4)
+│
+├── output_charts_bab4/          # 14 file gambar PNG untuk Bab 4 tesis
+│   ├── fig41_tp_multi.png s/d fig412_backlog_central.png  (Timeseries)
+│   ├── fig413_recovery_summary.png                       (Bar Chart Recovery Time)
+│   └── fig414_deficit_summary.png                        (Bar Chart Deficit)
+│
+├── docker-compose/              # Konfigurasi container cluster Flink, Spark, Kafka
+├── config/                      # Konfigurasi load ramp, fault timeline, monitoring
+├── flink-jobs/                  # Source code Java & JAR Flink streaming job
+├── spark-jobs/                  # Source code Java & JAR Spark streaming job
+├── metrics/                     # Telemetri run aktif terkini
+└── archive/                     # Arsip catatan prompt dan dokumen kerja lama
+```
+
+---
+
+## 🚀 Panduan Penggunaan
+
+### 1. Post-Processing & Visualisasi (Data CSV Sudah Ada)
+
+Jika 18 file CSV sudah tersedia di folder `results/`, cukup jalankan satu perintah:
+
+```bash
+# Jalankan seluruh verifikasi naskah, gambar Bab 4, figure cetak 300 DPI, dan laporan
+python3 run_all_analysis.py
+```
+
+#### Opsi Parsial:
+* **Verifikasi kecocokan metrik ke naskah saja:**
+  ```bash
+  python3 run_all_analysis.py --check
+  ```
+  *(Output akan menampilkan baris-demi-baris OK dan diakhiri `hasil: SEMUA COCOK`).*
+* **Regenerasi Figure 1–4 format cetak naskah saja (300 DPI):**
+  ```bash
+  python3 run_all_analysis.py --print
+  ```
+* **Regenerasi 14 Gambar Bab 4 tesis saja:**
+  ```bash
+  python3 run_all_analysis.py --bab4
+  ```
+* **Regenerasi laporan Markdown perbandingan:**
+  ```bash
+  python3 run_all_analysis.py --report
+  ```
+
+---
+
+### 2. Menjalankan Ulang Eksperimen Docker (Jika Diperlukan)
+
+#### Prasyarat:
+1. Docker Desktop aktif.
+2. Python environment aktif:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+#### Menjalankan Replikasi:
+```bash
+# Jalankan SEMUA skenario dan framework (18 run):
+bash scripts/run_all_replications.sh all all 3
+
+# Atau jalankan per skenario / framework spesifik:
+bash scripts/run_all_replications.sh flink multi 3     # 3x Flink multi-fault
+bash scripts/run_all_replications.sh spark multi 3     # 3x Spark multi-fault
+bash scripts/run_all_replications.sh flink single 3    # 3x Flink single node
+bash scripts/run_all_replications.sh spark central 3   # 3x Spark central failure
+```
+
+Setelah replikasi selesai, jalankan kembali:
+```bash
+python3 run_all_analysis.py
+```
+Seluruh gambar dan laporan akan otomatis diperbarui mengikuti data terbaru.
+
+---
+
+## 🖼️ Hasil Output Gambar
+
+1. **Paket Naskah / Paper (`results/figs_print/`):**
+   - `fig1_scenarios_print.png`: Arsitektur 3 skenario kegagalan (Before vs After).
+   - `fig2_throughput_print.png`: Throughput Multi-Fault 2-panel (Flink vs Spark).
+   - `fig3_latency_print.png`: Latensi Multi-Fault 2-panel.
+   - `fig4_central_print.png`: Karakteristik throughput Central Component Failure.
+   *(Ukuran sumber dirancang pas dengan lebar teks halaman docx A4 pada margin kiri 3,0 cm + kanan 2,5 cm = 6,10 in @ 300 DPI).*
+
+2. **Paket Bab 4 Tesis (`output_charts_bab4/`):**
+   - `Gambar 4.1 – 4.4`: Multi-Fault Cascading (Throughput, Latency, CPU & Memory, Backlog Proxy).
+   - `Gambar 4.5 – 4.8`: Single-Node Failure (Throughput, Latency, CPU & Memory, Backlog Proxy).
+   - `Gambar 4.9 – 4.12`: Central Component Failure (Throughput, Latency, CPU & Memory, Backlog Proxy).
+   - `Gambar 4.13`: Rata-rata Recovery Stabilization Interval per Skenario (Bar Chart Mean ± SD).
+   - `Gambar 4.14`: Rata-rata Throughput Deficit per Skenario (Bar Chart Mean ± SD).
