@@ -1,50 +1,50 @@
-# Evaluasi Fault Recovery: Apache Flink vs Apache Spark Structured Streaming
+# Fault Recovery Evaluation: Apache Flink vs. Apache Spark Structured Streaming
 
-Kerangka kerja eksperimental komparatif dan artefak analisis data untuk evaluasi *fault recovery* pada mesin pemrosesan data terdistribusi (**Apache Flink** dan **Apache Spark Structured Streaming**) di bawah beban dinamis dan skenario kegagalan bertingkat (*cascading faults*).
+A comparative experimental framework and data analysis pipeline evaluating fault recovery mechanisms in distributed stream processing engines (**Apache Flink** and **Apache Spark Structured Streaming**) under dynamic workload profiles and cascading failure conditions.
 
-Repository ini memuat seluruh pipeline dari eksekusi container Docker, injeksi kegagalan, perekaman telemetri per detik, hingga skrip pasca-pemrosesan data (*post-processing*) untuk menghasilkan angka Tabel 1 & 2 naskah jurnal (TELKOMNIKA) serta 14 grafik Gambar Bab 4 tesis.
-
----
-
-## 📋 Ringkasan Eksperimen
-
-Eksperimen mengevaluasi ketahanan dan pemulihan kedua mesin pemrosesan terhadap 3 skenario kegagalan:
-
-1. **Multi-Fault Cascading (900 detik):**
-   - Beban dinamis bertingkat (*step load*) 100 → 1000 msg/s.
-   - Kegagalan beruntun: *switchover* Worker 2 ($t=300\text{ s}$), terminasi paksa (*kill*) Worker 1 ($t=330\text{ s}$), dan pemulihan kembali Worker 1 ($t=660\text{ s}$).
-2. **Single-Node Failure (600 detik):**
-   - Beban bertahap (*ramp load*) 100 → 1000 msg/s.
-   - Terminasi paksa 1 worker aktif pada $t=120\text{ s}$ (tanpa restart).
-3. **Central Component Failure (600 detik):**
-   - Beban bertahap (*ramp load*) 100 → 1000 msg/s.
-   - Terminasi komponen koordinator (JobManager Flink / Driver Spark) pada $t=120\text{ s}$ dan dihidupkan kembali pada $t=180\text{ s}$ (downtime 60 detik).
-
-Eksperimen dijalankan dengan **3 kali replikasi** untuk setiap skenario dan framework ($3 \times 3 \times 2 = 18\text{ run}$ independen) dengan prosedur sanitasi penuh (*stack reset*, re-create topic Kafka, penghapusan state/checkpoint) antar-replikasi untuk menghindari kontaminasi data.
+This repository contains the end-to-end pipeline: Docker cluster deployment, synchronized fault injection, 1-second telemetry collection, and post-processing analytics for producing manuscript verification figures (TELKOMNIKA journal standards) and comprehensive benchmark scenario charts.
 
 ---
 
-## 🎯 7 Metrik Evaluasi (Bab 1 Tesis & Naskah)
+## 📋 Experimental Overview
 
-Seluruh metrik didefinisikan secara kanonik pada [`scripts/analysis_recovery_metrics.py`](scripts/analysis_recovery_metrics.py) sebagai satu-satunya sumber kebenaran (*single source of truth*):
+The benchmark evaluates system resiliency and recovery across three failure scenarios:
 
-| No | Metrik Evaluasi | Satuan | Definisi & Penjelasan |
+1. **Multi-Fault Cascading (900 s):**
+   - Dynamic step workload: 100 → 1000 msg/s.
+   - Cascading failures: Worker 2 switchover ($t = 300\text{ s}$), primary Worker 1 forced termination ($t = 330\text{ s}$), and Worker 1 recovery restart ($t = 660\text{ s}$).
+2. **Single-Node Failure (600 s):**
+   - Monotonic workload ramp: 100 → 1000 msg/s.
+   - Forced termination of one active worker at $t = 120\text{ s}$ (remains down).
+3. **Central Component Failure (600 s):**
+   - Monotonic workload ramp: 100 → 1000 msg/s.
+   - Coordinator failure (Flink JobManager / Spark Driver) at $t = 120\text{ s}$ and recovery restart at $t = 180\text{ s}$ (60-second unmeasurable outage window).
+
+Experiments are conducted across **3 replications** per scenario and engine ($3 \times 3 \times 2 = 18\text{ independent runs}$). Full environment sanitization (stack reset, Kafka topic recreation, and state/checkpoint cleanup) is enforced between runs to eliminate state contamination.
+
+---
+
+## 🎯 Core Evaluation Metrics
+
+All metrics are canonically defined in [`scripts/analysis_recovery_metrics.py`](scripts/analysis_recovery_metrics.py) as the single source of truth:
+
+| No | Metric | Unit | Mathematical Definition & Description |
 |:---:|:---|:---:|:---|
-| **1** | **Throughput** | msg/s | Laju data output yang berhasil diproses per detik. Dilaporkan sebagai nilai rata-rata dan puncak. |
-| **2** | **Latency** | ms | Waktu latensi pemrosesan data end-to-end (rata-rata sampel non-nol & puncak). Dilaporkan sebagai karakteristik tren internal. |
-| **3** | **Backlog Proxy Rate** | msg/s | Laju penumpukan pesan antrean yang dihitung dari $\max(\text{beban} - \text{throughput}, 0)$ per detik (menggantikan raw Kafka lag untuk menghindari artefak restart Flink). |
-| **4** | **CPU Utilization** | % | Rata-rata persentase penggunaan CPU node/container selama pengujian berlangsung. |
-| **5** | **Memory Utilization** | MB | Penggunaan memori penampung tertinggi (*Peak Container Memory*) per run, dihitung rata-rata dan SD sampel (Tabel 2 naskah). |
-| **6** | **Recovery Stabilization Interval** | detik | Durasi $T_2 - T_1$ di mana:<br>- $T_1$: sampel pertama saat throughput jatuh $< 50\%$ dari baseline pra-fault (rata-rata 60 detik pra-injeksi).<br>- $T_2$: sampel pertama dari 5 sampel beruntun yang mencapai throughput $\ge 90\%$ beban injeksi, dihitung dari akhir jendela fault aktif (Tabel 1 naskah). |
-| **7** | **Throughput Deficit** | % | Persentase kapasitas beban yang hilang akibat kegagalan:<br>$1 - \frac{\int \text{throughput}\,dt}{\int \text{beban}\,dt} \times 100\%$<br>Sampel selama jendela pelapor mati (central failure) dihitung throughput 0. Celah data $> 30\text{ s}$ dijaga dengan $dt = 1\text{ s}$. |
+| **1** | **Throughput** | msg/s | Output ingestion rate successfully processed per second. Reported as mean and peak rates. |
+| **2** | **Latency** | ms | End-to-end event processing latency (mean of non-zero telemetry samples and peak). Evaluated as internal trend characteristics. |
+| **3** | **Backlog Proxy Rate** | msg/s | Backlog accumulation rate computed as $\max(\text{offered load} - \text{throughput}, 0)$ per second (replaces raw Kafka lag to prevent driver/coordinator restart artifacts). |
+| **4** | **CPU Utilization** | % | Mean container/node CPU consumption over the benchmark duration. |
+| **5** | **Memory Utilization** | MB | Peak container memory consumption per run, reported as sample mean and standard deviation (Table 2 in manuscript). |
+| **6** | **Recovery Stabilization Interval** | seconds | Duration $T_2 - T_1$ where:<br>- $T_1$: first sample where throughput drops below $50\%$ of the pre-fault baseline (mean of 60 seconds prior to fault injection).<br>- $T_2$: first sample of 5 consecutive samples sustaining throughput $\ge 90\%$ of the fault-time load, evaluated from the conclusion of the active fault window ($t = 180\text{ s}$ for central failure). |
+| **7** | **Throughput Deficit** | % | Proportion of unserved capacity over the entire benchmark:<br>$1 - \frac{\int \text{throughput}\,dt}{\int \text{offered load}\,dt} \times 100\%$<br>Samples during the reporting coordinator outage (central failure) are assigned zero throughput. Collection gaps $> 30\text{ s}$ are capped at $dt = 1\text{ s}$ without extrapolation. |
 
 ---
 
-## 📊 Target Verifikasi Metrik (Tabel 1 & Tabel 2 Naskah)
+## 📊 Manuscript Verification Benchmark (Table 1 & Table 2)
 
-Semua angka dihitung langsung dari 18 file CSV :
+All statistical figures are computed directly from the 18 raw CSV telemetry files without hardcoding:
 
-| Skenario | Framework | Recovery Interval (s) | Per Run (rep1/2/3) | Throughput Deficit (%) | Peak Backlog (msg/s) | Peak Memory (MB) |
+| Scenario | Framework | Recovery Interval (s) | Per Run (rep1 / rep2 / rep3) | Throughput Deficit (%) | Peak Backlog (msg/s) | Peak Memory (MB) |
 |:---|:---|:---:|:---:|:---:|:---:|:---:|
 | **Multi-Fault** | **Flink** | **50.0 ± 4.8** | 52.5 / 52.8 / 44.5 | **9.18 ± 1.45** | 841 | 1391 ± 24 |
 | **Multi-Fault** | **Spark** | **35.3 ± 11.4** | 47.5 / 33.5 / 25.0 | **8.11 ± 0.74** | 439 | 3914 ± 139 |
@@ -53,129 +53,129 @@ Semua angka dihitung langsung dari 18 file CSV :
 | **Central** | **Flink** | **68.6 ± 1.2** | 69.5 / 67.2 / 69.0 | **16.19 ± 2.61** | 190 | 1233 ± 1 |
 | **Central** | **Spark** | **68.4 ± 1.8** | 67.9 / 66.9 / 70.4 | **19.35 ± 1.43** | 300 | 2567 ± 164 |
 
-*Catatan: Pembulatan mengikuti kaidah ROUND_HALF_UP pada digit desimal terakhir; simpangan baku menggunakan SD sampel ($ddof=1$).*
+*Note: Numerical rounding strictly adheres to ROUND_HALF_UP on the last reported digit. Dispersion is reported as sample standard deviation ($ddof = 1$).*
 
 ---
 
-## 📁 Struktur Direktori
+## 📁 Repository Structure
 
 ```
 Thesis/
-├── run_all_analysis.py          # Master CLI: jalankan seluruh post-processing sekali jalan
-├── README.md                    # Dokumentasi lengkap proyek
-├── requirements.txt             # Dependensi Python
-├── cic-collection.parquet       # Dataset sumber traffic jaringan (CIC-DDoS)
+├── run_all_analysis.py          # Master CLI: executes complete post-processing pipeline
+├── README.md                    # Project documentation
+├── requirements.txt             # Python dependencies
+├── cic-collection.parquet       # Raw network telemetry dataset (CIC-DDoS)
 │
-├── scripts/                     # Seluruh skrip eksekusi, analisis, dan visualisasi
-│   ├── analysis_recovery_metrics.py  # [Kanonik] Verifikasi metrik Tabel 1 & 2 naskah
-│   ├── generate_charts_bab4_3x.py   # Generator 14 grafik Gambar Bab 4 tesis
-│   ├── make_fig1_scenarios.py       # Generator Figure 1 naskah (Arsitektur, 300 DPI)
-│   ├── make_figs_print.py           # Generator Figure 2, 3, 4 naskah (Cetak, 300 DPI)
-│   ├── generate_report.py           # Generator laporan komparatif Markdown
-│   ├── generate_publication_figures.py # Generator pack gambar publikasi
-│   ├── run_all_replications.sh      # Master runner replikasi 3x (18 run)
-│   ├── run_experiment.sh            # Orkestrator eksperimen Flink & Spark
-│   ├── fault_injection.sh           # Pengontrol injeksi kegagalan
-│   ├── metrics_collector.py         # Pengumpul telemetri per detik
-│   └── producer.py                  # Generator beban sintetis ke Kafka
+├── scripts/                     # Execution, analytics, and figure generation scripts
+│   ├── analysis_recovery_metrics.py  # [Canonical] Metric computation & manuscript verification
+│   ├── generate_charts_bab4_3x.py   # Scenario benchmark chart generator (timeseries & summaries)
+│   ├── make_fig1_scenarios.py       # Architecture diagram generator (300 DPI print)
+│   ├── make_figs_print.py           # Publication figures generator (300 DPI print)
+│   ├── generate_report.py           # Comparative Markdown report generator
+│   ├── generate_publication_figures.py # Publication figure pack and catalog generator
+│   ├── run_all_replications.sh      # Master replication runner (18 runs)
+│   ├── run_experiment.sh            # Framework experiment orchestrator
+│   ├── fault_injection.sh           # Cascading failure controller
+│   ├── metrics_collector.py         # 1-second Prometheus telemetry collector
+│   └── producer.py                  # Synthetic Kafka workload generator
 │
-├── results/                     # Hasil CSV 18 run & figur naskah
+├── results/                     # 18-run experimental CSVs & publication print figures
 │   ├── flink_multi_rep[1-3].csv
 │   ├── spark_multi_rep[1-3].csv
 │   ├── flink_single_rep[1-3].csv
 │   ├── spark_single_rep[1-3].csv
 │   ├── flink_central_rep[1-3].csv
 │   ├── spark_central_rep[1-3].csv
-│   └── figs_print/              # Gambar cetak naskah 300 DPI (Figure 1, 2, 3, 4)
+│   └── figs_print/              # 300 DPI publication figures (Figure 1, 2, 3, 4)
 │
-├── output_charts_bab4/          # 14 file gambar PNG untuk Bab 4 tesis
-│   ├── fig41_tp_multi.png s/d fig412_backlog_central.png  (Timeseries)
-│   ├── fig413_recovery_summary.png                       (Bar Chart Recovery Time)
-│   └── fig414_deficit_summary.png                        (Bar Chart Deficit)
+├── output_charts_bab4/          # 14 benchmark scenario figures
+│   ├── fig41_tp_multi.png to fig412_backlog_central.png   (Timeseries overlays)
+│   ├── fig413_recovery_summary.png                       (Recovery Interval summary)
+│   └── fig414_deficit_summary.png                        (Throughput Deficit summary)
 │
-├── docker-compose/              # Konfigurasi container cluster Flink, Spark, Kafka
-├── config/                      # Konfigurasi load ramp, fault timeline, monitoring
-├── flink-jobs/                  # Source code Java & JAR Flink streaming job
-├── spark-jobs/                  # Source code Java & JAR Spark streaming job
-├── metrics/                     # Telemetri run aktif terkini
-└── archive/                     # Arsip catatan prompt dan dokumen kerja lama
+├── docker-compose/              # Container topologies for Flink, Spark, Kafka, Prometheus
+├── config/                      # Workload ramp profiles, fault schedules, monitoring configs
+├── flink-jobs/                  # Java source & compiled JAR for Flink streaming job
+├── spark-jobs/                  # Java source & compiled JAR for Spark streaming job
+├── metrics/                     # Active run telemetry files
+└── archive/                     # Historical prompt notes and scratch files
 ```
 
 ---
 
-## 🚀 Panduan Penggunaan
+## 🚀 Execution Guide
 
-### 1. Post-Processing & Visualisasi (Data CSV Sudah Ada)
+### 1. Post-Processing & Visualizations (From Existing CSV Data)
 
-Jika 18 file CSV sudah tersedia di folder `results/`, cukup jalankan satu perintah:
+When the 18 experimental CSV files are present in `results/`, run the unified master runner:
 
 ```bash
-# Jalankan seluruh verifikasi naskah, gambar Bab 4, figure cetak 300 DPI, dan laporan
+# Execute verification, publication figures, scenario charts, and comparative reports
 python3 run_all_analysis.py
 ```
 
-#### Opsi Parsial:
-* **Verifikasi kecocokan metrik ke naskah saja:**
+#### Selective Options:
+* **Verify metrics against manuscript tables only:**
   ```bash
   python3 run_all_analysis.py --check
   ```
-  *(Output akan menampilkan baris-demi-baris OK dan diakhiri `hasil: SEMUA COCOK`).*
-* **Regenerasi Figure 1–4 format cetak naskah saja (300 DPI):**
+  *(Outputs line-by-line checks and confirms `hasil: SEMUA COCOK`).*
+* **Generate publication print figures only (300 DPI):**
   ```bash
   python3 run_all_analysis.py --print
   ```
-* **Regenerasi 14 Gambar Bab 4 tesis saja:**
+* **Generate scenario benchmark charts only:**
   ```bash
   python3 run_all_analysis.py --bab4
   ```
-* **Regenerasi laporan Markdown perbandingan:**
+* **Generate comparative Markdown reports only:**
   ```bash
   python3 run_all_analysis.py --report
   ```
 
 ---
 
-### 2. Menjalankan Ulang Eksperimen Docker (Jika Diperlukan)
+### 2. Executing New Docker Experiments (Optional)
 
-#### Prasyarat:
-1. Docker Desktop aktif.
-2. Python environment aktif:
+#### Prerequisites:
+1. Docker Desktop running.
+2. Python environment active:
    ```bash
    pip install -r requirements.txt
    ```
 
-#### Menjalankan Replikasi:
+#### Launching Replications:
 ```bash
-# Jalankan SEMUA skenario dan framework (18 run):
+# Run ALL scenarios and engines (18 runs total):
 bash scripts/run_all_replications.sh all all 3
 
-# Atau jalankan per skenario / framework spesifik:
+# Or execute specific scenario / engine combinations:
 bash scripts/run_all_replications.sh flink multi 3     # 3x Flink multi-fault
 bash scripts/run_all_replications.sh spark multi 3     # 3x Spark multi-fault
 bash scripts/run_all_replications.sh flink single 3    # 3x Flink single node
 bash scripts/run_all_replications.sh spark central 3   # 3x Spark central failure
 ```
 
-Setelah replikasi selesai, jalankan kembali:
+After replication completion, run:
 ```bash
 python3 run_all_analysis.py
 ```
-Seluruh gambar dan laporan akan otomatis diperbarui mengikuti data terbaru.
+All charts, tables, and reports will update automatically with the newly collected data.
 
 ---
 
-## 🖼️ Hasil Output Gambar
+## 🖼️ Generated Visualizations
 
-1. **Paket Naskah / Paper (`results/figs_print/`):**
-   - `fig1_scenarios_print.png`: Arsitektur 3 skenario kegagalan (Before vs After).
-   - `fig2_throughput_print.png`: Throughput Multi-Fault 2-panel (Flink vs Spark).
-   - `fig3_latency_print.png`: Latensi Multi-Fault 2-panel.
-   - `fig4_central_print.png`: Karakteristik throughput Central Component Failure.
-   *(Ukuran sumber dirancang pas dengan lebar teks halaman docx A4 pada margin kiri 3,0 cm + kanan 2,5 cm = 6,10 in @ 300 DPI).*
+1. **Publication Print Pack (`results/figs_print/`):**
+   - `fig1_scenarios_print.png`: Architecture diagram of failure scenarios (Normal vs Fault states).
+   - `fig2_throughput_print.png`: Multi-Fault Throughput comparison (2 panels, Flink vs Spark).
+   - `fig3_latency_print.png`: Multi-Fault Latency comparison (2 panels).
+   - `fig4_central_print.png`: Central Component Failure throughput comparative timeline.
+   *(Sized precisely for standard A4 page text width at 300 DPI: 6.10 inches).*
 
-2. **Paket Bab 4 Tesis (`output_charts_bab4/`):**
-   - `Gambar 4.1 – 4.4`: Multi-Fault Cascading (Throughput, Latency, CPU & Memory, Backlog Proxy).
-   - `Gambar 4.5 – 4.8`: Single-Node Failure (Throughput, Latency, CPU & Memory, Backlog Proxy).
-   - `Gambar 4.9 – 4.12`: Central Component Failure (Throughput, Latency, CPU & Memory, Backlog Proxy).
-   - `Gambar 4.13`: Rata-rata Recovery Stabilization Interval per Skenario (Bar Chart Mean ± SD).
-   - `Gambar 4.14`: Rata-rata Throughput Deficit per Skenario (Bar Chart Mean ± SD).
+2. **Benchmark Scenario Charts (`output_charts_bab4/`):**
+   - `Figures 4.1 – 4.4`: Multi-Fault Cascading (Throughput, Latency, CPU & Memory, Backlog Proxy).
+   - `Figures 4.5 – 4.8`: Single-Node Failure (Throughput, Latency, CPU & Memory, Backlog Proxy).
+   - `Figures 4.9 – 4.12`: Central Component Failure (Throughput, Latency, CPU & Memory, Backlog Proxy).
+   - `Figure 4.13`: Mean Recovery Stabilization Interval summary across scenarios (Bar Chart Mean ± SD).
+   - `Figure 4.14`: Mean Throughput Deficit summary across scenarios (Bar Chart Mean ± SD).
